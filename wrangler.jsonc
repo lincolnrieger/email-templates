@@ -1,0 +1,40 @@
+// Cloudflare Worker configuration for Woodhouse Email Templates.
+// Cloudflare reads this on every deploy (Workers Builds runs
+// `npx wrangler deploy` after each push to the production branch).
+{
+  "name": "email-templates",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-02",
+
+  // The app itself is static files in ./public. run_worker_first sends every
+  // request through the password check in src/index.js before anything is
+  // served, including the /api/ routes that read and save templates.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": true
+  },
+
+  // Where the templates are saved. On the first deploy Wrangler creates a D1
+  // database called "email-templates" and links it here automatically; the
+  // table inside it is created by src/index.js the first time the app loads.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "email-templates" }
+  ],
+
+  // Limits password attempts per visitor address (10 a minute).
+  "ratelimits": [
+    {
+      "name": "LOGIN_LIMIT",
+      "namespace_id": "1002",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ],
+
+  // The password is the ACCESS_PASSWORD secret, set in the dashboard.
+  // keep_vars stops a deploy from touching dashboard variables.
+  "keep_vars": true,
+
+  "observability": { "enabled": true }
+}
