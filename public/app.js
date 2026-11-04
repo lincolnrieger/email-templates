@@ -33,6 +33,7 @@ const ICON = {
   x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   all: '<svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   clock: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+  key: '<svg class="i" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/></svg>',
   link: '<svg class="i" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   image: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>',
   folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
@@ -84,7 +85,7 @@ const Store = {
       if (res.status === 401) { location.reload(); return new Promise(() => {}); }
       if (res.ok) {
         const d = await res.json();
-        return { templates: d.templates || [], categories: d.meta?.categories || null, usage: d.meta?.usage || null, initialised: !!d.meta?.initialised };
+        return { templates: d.templates || [], categories: d.meta?.categories || null, usage: d.meta?.usage || null, shared: d.meta?.shared || null, initialised: !!d.meta?.initialised };
       }
       // 404: no API here at all (opened as a plain static page). 503: the
       // Worker has no database bound. Anything else is a real failure that
@@ -94,7 +95,7 @@ const Store = {
     this.mode = 'local';
     let d = {};
     try { d = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}'); } catch {}
-    return { templates: d.templates || [], categories: d.categories || null, usage: d.usage || null, initialised: !!d.initialised };
+    return { templates: d.templates || [], categories: d.categories || null, usage: d.usage || null, shared: d.shared || null, initialised: !!d.initialised };
   },
 
   _local(fn) {
@@ -194,6 +195,7 @@ const S = {
   categories: [],
   usage: { recent: [], counts: {}, last: {} },
   images: [],           // image library: {id, name, type, width, height, size}
+  shared: null,         // Codes & links: gate codes, places, links, maps, other details
   view: 'all',          // 'all' | 'fav' | 'recent' | 'cat:<id>' | 'cat:' (uncategorised)
   query: '',
   sort: 'best',
@@ -290,11 +292,14 @@ function scoreTemplate(t, toks, rawQuery) {
   const phrase = norm(rawQuery).trim();
   if (phrase.length > 2 && ix.name.includes(phrase)) score += 20;
 
+  // Pre-choose a building only when the search points at exactly one:
+  // "hooper" or "st george 3" does, "bell tent" (all five tents) doesn't.
   let variationId = null;
-  for (const v of t.variations) {
-    const b = norm(v.building);
-    if (toks.some((tok) => tok.length >= 3 && b.includes(tok))) { variationId = v.id; break; }
-  }
+  const useful = toks.filter((tok) => tok.length >= 3 || /^\d+$/.test(tok));
+  const hits = t.variations.map((v) => ({ v, n: useful.filter((tok) => norm(v.building).split(/[^a-z0-9]+/).some((w) => w.startsWith(tok))).length }));
+  const best = Math.max(0, ...hits.map((h) => h.n));
+  const top = hits.filter((h) => h.n === best);
+  if (best > 0 && top.length === 1) variationId = top[0].v.id;
   return { score, variationId };
 }
 
@@ -408,35 +413,112 @@ function renderAll() {
   renderDetail();
 }
 
+/* ============================================================ Codes & links */
+//
+// Details that many templates share and that change often: gate codes,
+// lock codes, web pages and maps. They live in the database (meta 'shared')
+// and fill in placeholders automatically:
+//
+//   [Gate Code]          one of the rotating gate codes, picked at random per email
+//   [Fixed Gate Code]    the fixed code (never rotated)
+//   [Lock Code]          ┐
+//   [Building Link]      ├ from the Places row matching the chosen building
+//   [Building Map]       ┘ (that place's map, or the default map)
+//   [<Place> Link]       a place's web page, e.g. [Rymill Centre Link]
+//   [<Link name> Link]   e.g. [Disc Golf Link]
+//   [<Map name>]         e.g. [Entry Map] (the picture itself)
+//   [<Detail name>]      e.g. [Caretaker Phone]
+
+const PLACE_KINDS = ['Building', 'Chalet', 'Bell tent', 'Camping', 'Other'];
+const cleanName = (x) => String(x || '').replace(/[\[\]{}|\n]/g, ' ').replace(/\s+/g, ' ').trim();
+
+function normaliseShared(sh) {
+  sh = sh && typeof sh === 'object' ? sh : {};
+  const arr = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'object') : []);
+  const str = (x) => String(x ?? '');
+  return {
+    gateCodes: (Array.isArray(sh.gateCodes) ? sh.gateCodes : []).map(str),
+    fixedGateCode: str(sh.fixedGateCode),
+    places: arr(sh.places).map((x) => ({ id: str(x.id) || uid('pl'), name: str(x.name), kind: PLACE_KINDS.includes(x.kind) ? x.kind : 'Building', code: str(x.code), link: str(x.link), map: str(x.map) })),
+    links: arr(sh.links).map((x) => ({ id: str(x.id) || uid('ln'), name: str(x.name), url: str(x.url) })),
+    maps: arr(sh.maps).map((x) => ({ id: str(x.id) || uid('mp'), name: str(x.name), image: str(x.image), width: +x.width || 600 })),
+    details: arr(sh.details).map((x) => ({ id: str(x.id) || uid('dt'), name: str(x.name), value: str(x.value) })),
+  };
+}
+
+function gateCodes() { return S.shared.gateCodes.map((c) => c.trim()).filter(Boolean); }
+
+/** A random rotating gate code, different from `not` when there's a choice. */
+function pickGate(not) {
+  const codes = gateCodes();
+  if (!codes.length) return '';
+  const pool = codes.length > 1 ? codes.filter((c) => c !== not) : codes;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function placeFor(building) {
+  const n = norm(building).trim();
+  return S.shared.places.find((x) => norm(x.name).trim() === n) || null;
+}
+function defaultMap() {
+  const ms = S.shared.maps.filter((m) => m.image && imageMeta(m.image));
+  return ms.find((m) => norm(m.name).trim() === 'entry map') || ms[0] || null;
+}
+function mapForPlace(pl) {
+  return (pl && pl.map && S.shared.maps.find((m) => m.id === pl.map && m.image && imageMeta(m.image))) || defaultMap();
+}
+function mapToken(m) {
+  return m && m.image && imageMeta(m.image) ? `{{image:${m.image}|${cleanName(m.name)}|${m.width || 600}}}` : '';
+}
+
+function sharedValues(building, gate) {
+  const sh = S.shared; const out = {};
+  const put = (k, v) => { k = cleanName(k); v = String(v || '').trim(); if (k && v) out[k] = v; };
+  for (const d of sh.details) put(d.name, d.value);
+  for (const l of sh.links) if (cleanName(l.name)) put(l.name + ' Link', l.url);
+  for (const pl of sh.places) if (cleanName(pl.name)) put(pl.name + ' Link', pl.link);
+  for (const m of sh.maps) put(m.name, mapToken(m));
+  put('Fixed Gate Code', sh.fixedGateCode);
+  put('Gate Code', gate);
+  const pl = building ? placeFor(building) : null;
+  if (pl) { put('Lock Code', pl.code); put('Building Link', pl.link); put('Building Map', mapToken(mapForPlace(pl))); }
+  return out;
+}
+
+/** Every placeholder Codes & links can fill (for the editor's Insert buttons). */
+function sharedPlaceholderNames() {
+  const sh = S.shared;
+  const named = (list, suffix = '') => list.map((x) => cleanName(x.name)).filter(Boolean).map((n) => n + suffix);
+  return [...new Set(['Gate Code', 'Fixed Gate Code', 'Lock Code', 'Building Link', 'Building Map',
+    ...named(sh.maps), ...named(sh.links, ' Link'), ...named(sh.places, ' Link'), ...named(sh.details)])];
+}
+
 /* ============================================================ Detail: use */
+//
+// Using a template: choose the building (if it has building versions), fill
+// in the blanks, copy. The email text itself isn't edited here; that's done
+// in Outlook after pasting.
 
 function work(t) {
-  if (!S.work[t.id]) {
-    S.work[t.id] = { varId: '', subject: null, body: null, values: {}, base: t.updatedAt };
-  }
+  if (!S.work[t.id]) S.work[t.id] = { varId: '', values: {}, gate: pickGate() };
   const w = S.work[t.id];
-  // Saved elsewhere since: keep any edits on screen; they now compare against the new version.
-  if (w.base !== t.updatedAt) w.base = t.updatedAt;
   if (w.varId && !t.variations.some((v) => v.id === w.varId)) w.varId = '';
+  if (w.gate && !gateCodes().includes(w.gate)) w.gate = pickGate();
+  if (!w.gate) w.gate = pickGate();
   return w;
 }
 
 function currentVariation(t, w) { return t.variations.find((v) => v.id === w.varId) || null; }
 
-/** The stored subject/body that the Use view starts from (building's own email, if it has one). */
-function storedText(t, v) {
-  if (v && v.ownEmail) return { subject: v.subject, body: v.body, where: v.building + ' version' };
-  return { subject: t.subject, body: t.body, where: t.variations.length ? 'shared email (all buildings)' : 'template' };
-}
-
-function workingText(t, w) {
-  const st = storedText(t, currentVariation(t, w));
-  return { subject: w.subject ?? st.subject, body: w.body ?? st.body, stored: st };
+/** The subject and body for this email: the chosen building's own version, if it has one. */
+function emailText(t, w) {
+  const v = currentVariation(t, w);
+  return v && v.ownEmail ? { subject: v.subject, body: v.body } : { subject: t.subject, body: t.body };
 }
 
 function autoValues(t, w) {
-  const out = {};
   const v = currentVariation(t, w);
+  const out = sharedValues(v ? v.building : null, w.gate);
   if (v) {
     out['Building Name'] = v.building;
     for (const [k, x] of Object.entries(v.values)) if (x !== '') out[k] = x;
@@ -448,9 +530,7 @@ function autoValues(t, w) {
 
 function resolvedValues(t, w) {
   const auto = autoValues(t, w);
-  const out = { ...auto };
-  for (const [k, x] of Object.entries(w.values)) out[k] = x;
-  return { values: out, auto };
+  return { values: { ...w.values, ...auto }, auto };
 }
 
 function fill(text, values) {
@@ -503,11 +583,13 @@ function autolink(h) {
 function segmentHtml(text, values, forCopy, inLink) {
   let h = esc(text);
   if (!inLink) h = autolink(h);
-  h = h.replace(BOLD, '<b>$1</b>');
   if (!forCopy) {
     h = h.replace(PH, (m, k) => {
       const raw = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null;
-      return raw != null && raw !== '' ? `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>` : `<span class="ph-e">${m}</span>`;
+      if (raw == null || raw === '') return `<span class="ph-e">${m}</span>`;
+      const im = /^\{\{image:([a-z0-9-]+)(?:\|([^|}\n]*))?(?:\|(\d+))?\}\}$/.exec(raw);
+      if (im) return imageHtml(im[1], esc(im[2] || ''), im[3], false);
+      return `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>`;
     });
   }
   return h.replace(IMG, (m, id, name, w) => imageHtml(id, name, w, forCopy));
@@ -519,6 +601,8 @@ function segmentHtml(text, values, forCopy, inLink) {
  * For copying, the text has already had its placeholders filled in.
  */
 function lineHtml(line, values, forCopy) {
+  // Bold is marked across the whole line first, so it can wrap a link.
+  line = line.replace(BOLD, '\u0001$1\u0002');
   let out = ''; let last = 0;
   for (const m of line.matchAll(LINK)) {
     out += segmentHtml(line.slice(last, m.index), values, forCopy, false);
@@ -530,7 +614,8 @@ function lineHtml(line, values, forCopy) {
       : `<a class="nolink" title="Link address still to fill in: ${esc(m[1])}">${inner}</a>`;
     last = m.index + m[0].length;
   }
-  return out + segmentHtml(line.slice(last), values, forCopy, false);
+  out += segmentHtml(line.slice(last), values, forCopy, false);
+  return out.replace(/\u0001/g, '<b>').replace(/\u0002/g, '</b>');
 }
 
 function previewHtml(text, values) {
@@ -556,156 +641,92 @@ function renderDetail() {
     el.innerHTML = `<div class="blank"><div>
       <p><b>${S.templates.length} templates</b> in the library.</p>
       <p>Search or pick one from the list to open it here.</p>
-      <p style="margin-top:10px"><span class="k">/</span> search &nbsp; <span class="k">↑</span> <span class="k">↓</span> move &nbsp; <span class="k">Enter</span> fill in</p>
+      <p style="margin-top:10px"><span class="k">/</span> search &nbsp; <span class="k">↑</span> <span class="k">↓</span> move &nbsp; <span class="k">Enter</span> open</p>
     </div></div>`;
     return;
   }
   const w = work(t);
   const v = currentVariation(t, w);
+  const needBuilding = t.variations.length > 0 && !v;
   el.innerHTML = `
   <div class="d-head">
     <button class="btn quiet icon back" type="button" data-act="close" aria-label="Back to list">${ICON.back}</button>
     <div class="d-title">
-      <div class="crumb"><span>${esc(catName(t.categoryId))}</span>${t.keywords.length ? `<span class="kw">· ${esc(t.keywords.slice(0, 6).join(', '))}</span>` : ''}</div>
+      <div class="crumb"><span>${esc(catName(t.categoryId))}</span></div>
       <h2><span>${esc(t.name)}</span><button class="fav" type="button" data-act="fav" aria-pressed="${t.favourite}" title="${t.favourite ? 'Remove from favourites' : 'Add to favourites'}">${ICON.star}</button></h2>
       ${t.description ? `<p>${esc(t.description)}</p>` : ''}
     </div>
     <div class="d-actions">
-      <button class="btn" type="button" data-act="edit">${ICON.edit}Edit template</button>
-      <button class="btn" type="button" data-act="dup">${ICON.dup}Duplicate</button>
-      <button class="btn danger" type="button" data-act="del">${ICON.trash}Delete</button>
+      <button class="btn quiet" type="button" data-act="edit">${ICON.edit}Edit template</button>
+      <button class="btn quiet" type="button" data-act="dup">${ICON.dup}Duplicate</button>
+      <button class="btn quiet danger" type="button" data-act="del">${ICON.trash}Delete</button>
     </div>
   </div>
 
   <div class="work">
-    <div class="stack">
-      <div class="box">
-        ${t.variations.length ? `
-        <div class="building">
-          <label class="lbl" for="varSel">Building</label>
-          <select class="select" id="varSel">
-            <option value="">Select a building…</option>
-            ${t.variations.map((x) => `<option value="${esc(x.id)}"${x.id === w.varId ? ' selected' : ''}>${esc(x.building)}</option>`).join('')}
-          </select>
-          <div class="facts" id="facts">${factsHtml(t, v)}</div>
-        </div>` : ''}
-        <div class="box-h"><h4>Fill in</h4><button class="link sp" type="button" data-act="clearvals">Clear</button></div>
-        <div class="box-b" id="phGrid"></div>
-      </div>
-
-      <div class="box">
-        <div class="box-h"><h4>Email</h4><span class="help sp" style="margin:0">Edits here change this email only, unless you save them.</span></div>
-        <div class="box-b stack">
-          <div class="field"><label class="lbl" for="wSubj">Subject</label><input class="input" id="wSubj"></div>
-          <div class="field"><div class="lbl-row"><label class="lbl" for="wBody">Body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="link" title="Link: select text, then click (Ctrl+K)">${ICON.link}Link</button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea body-ta" id="wBody" spellcheck="true"></textarea></div>
-        </div>
-        <div class="savebar" id="saveBar"></div>
-      </div>
-
-      ${t.notes ? `<div class="notes"><b>Internal notes · not copied</b>${esc(t.notes)}</div>` : ''}
+    <div class="col">
+      ${t.variations.length ? `
+      <section class="panel">
+        <div class="panel-h"><h4>Building</h4>${needBuilding ? '<span class="need">Choose one to start</span>' : ''}</div>
+        <div class="choices">${t.variations.map((x) => `<button type="button" class="choice" data-var="${esc(x.id)}" aria-pressed="${x.id === w.varId}">${esc(x.building)}</button>`).join('')}</div>
+      </section>` : ''}
+      <div id="fillArea" class="col"></div>
+      ${t.notes ? `<div class="notes"><b>Internal notes (not copied)</b>${esc(t.notes)}</div>` : ''}
     </div>
 
-    <div class="box preview">
+    <section class="panel preview">
       <div class="copybar">
-        <button class="btn primary lg" type="button" data-act="copy">${ICON.copy}Copy email</button>
-        <button class="btn lg" type="button" data-act="copysubj">Copy subject</button>
+        <button class="btn primary lg" type="button" data-act="copy"${needBuilding ? ' disabled' : ''}>${ICON.copy}Copy email</button>
+        <button class="btn lg" type="button" data-act="copysubj"${needBuilding ? ' disabled' : ''}>Copy subject</button>
       </div>
-      <div class="mail-subj"><span>Subject</span><span id="pvSubj"></span></div>
-      <div class="mail" id="pvBody"></div>
-      <div class="unfilled" id="pvWarn" hidden></div>
-    </div>
+      ${needBuilding
+        ? '<div class="pv-empty">Choose the building first. Its email will show here.</div>'
+        : '<div class="mail-subj"><span>Subject</span><span id="pvSubj"></span></div><div class="mail" id="pvBody"></div><div class="unfilled" id="pvWarn" hidden></div>'}
+    </section>
   </div>`;
-
-  const wt = workingText(t, w);
-  $('#wSubj').value = wt.subject;
-  $('#wBody').value = wt.body;
-  autosize($('#wBody'));
-  setGrid(t, w);
-  updatePreview();
-  updateSaveBar();
+  if (!needBuilding) { renderFill(t, w); updatePreview(); }
 }
 
-function factsHtml(t, v) {
-  if (!v) return '<span>Choose the building to load its details into the email.</span>';
-  const entries = t.fields.filter((f) => v.values[f]).slice(0, 6);
-  return entries.map((f) => `<span>${esc(f)}: <b>${esc(v.values[f])}</b></span>`).join('') + (v.ownEmail ? '<span><b>Has its own version of the email</b></span>' : '');
+/** How a value from Codes & links is shown in "Filled in for you". */
+function autoDisplay(val) {
+  const im = /^\{\{image:[a-z0-9-]+\|([^|}\n]*)/.exec(val);
+  if (im) return `<span class="mapname">${ICON.image}${esc(im[1])}</span>`;
+  if (/^(https?:|mailto:)/i.test(val)) return `<a href="${esc(val)}" target="_blank" rel="noopener noreferrer">${esc(val.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, ''))}</a>`;
+  return `<b>${esc(val)}</b>`;
 }
 
-function placeholdersOf(t, w) {
-  const wt = workingText(t, w);
-  return placeholdersIn(wt.subject, wt.body);
-}
-
-function phGridHtml(t, w, fields) {
-  if (!fields.length) return '<div class="none">This email has no placeholders.</div>';
-  const { auto } = resolvedValues(t, w);
-  const v = currentVariation(t, w);
-  const input = (k) => {
-    const has = Object.prototype.hasOwnProperty.call(w.values, k);
-    const val = has ? w.values[k] : (auto[k] ?? '');
-    const big = String(val).length > 60;
-    const changed = has && auto[k] != null && w.values[k] !== auto[k];
-    return `<div class="field"${big ? ' style="grid-column:1/-1"' : ''}><label class="lbl"><span>${esc(k)}</span>${changed ? '<span class="src">changed for this email</span>' : ''}</label>
-      <input class="input${auto[k] != null && !has ? ' auto' : ''}" data-ph="${esc(k)}" value="${esc(val)}" placeholder="[${esc(k)}]" autocomplete="off" aria-label="${esc(k)}"></div>`;
-  };
-  // Values that fill themselves in (from the building or Settings) are tucked
-  // away below, so only what still needs typing is in view.
+function renderFill(t, w) {
+  const area = $('#fillArea'); if (!area) return;
+  const { subject, body } = emailText(t, w);
+  const fields = placeholdersIn(subject, body);
+  const auto = autoValues(t, w);
   const manual = fields.filter((k) => auto[k] == null);
-  const pre = fields.filter((k) => auto[k] != null);
-  const from = [v ? v.building : '', pre.includes('Your Name') && prefs().name ? 'your settings' : ''].filter(Boolean).join(' and ');
-  return (manual.length ? `<div class="ph-grid">${manual.map(input).join('')}</div>` : '<div class="none">Everything is filled in automatically.</div>') +
-    (pre.length ? `<details class="pre"${w.showPre ? ' open' : ''}><summary>${pre.length} filled in from ${esc(from)}<span class="help"> · open to change them for this email</span></summary><div class="ph-grid">${pre.map(input).join('')}</div></details>` : '');
-}
-
-function setGrid(t, w) {
-  const grid = $('#phGrid'); if (!grid) return;
-  const fields = placeholdersOf(t, w);
-  grid.innerHTML = phGridHtml(t, w, fields);
-  grid.dataset.sig = fields.join('\u0001');
+  const filled = fields.filter((k) => auto[k] != null);
+  area.innerHTML = `
+    <section class="panel">
+      <div class="panel-h"><h4>Fill in</h4>${manual.length ? '<button class="link" type="button" data-act="clearvals">Clear</button>' : ''}</div>
+      ${manual.length
+        ? `<div class="ph-grid">${manual.map((k) => `<label class="field"><span class="lbl">${esc(k)}${k === 'Your Name' ? ' <span class="opt">remembered</span>' : ''}</span><input class="input" data-ph="${esc(k)}" value="${esc(w.values[k] ?? '')}" placeholder="[${esc(k)}]" autocomplete="off"></label>`).join('')}</div>`
+        : '<p class="none">Nothing to fill in. This email is ready to copy.</p>'}
+    </section>
+    ${filled.length ? `
+    <section class="panel">
+      <div class="panel-h"><h4>Filled in for you</h4><button class="link" type="button" data-act="openshared">Codes &amp; links</button></div>
+      <dl class="auto">${filled.map((k) => `<div><dt>${esc(k)}</dt><dd>${autoDisplay(auto[k])}${k === 'Gate Code' && gateCodes().length > 1 ? ' <button class="link" type="button" data-act="newgate">Use a different code</button>' : ''}</dd></div>`).join('')}</dl>
+    </section>` : ''}`;
 }
 
 function updatePreview() {
-  const t = byId(S.selectedId); if (!t) return;
+  const t = byId(S.selectedId); if (!t || !$('#pvBody')) return;
   const w = work(t);
-  const wt = workingText(t, w);
+  const { subject, body } = emailText(t, w);
   const { values } = resolvedValues(t, w);
-  $('#pvSubj').innerHTML = previewHtml(wt.subject, values).replace(/^<p>|<\/p>$/g, '');
-  $('#pvBody').innerHTML = previewHtml(wt.body, values);
-  const missing = placeholdersIn(wt.subject, wt.body).filter((k) => !values[k]);
+  $('#pvSubj').innerHTML = previewHtml(subject, values).replace(/^<p>|<\/p>$/g, '');
+  $('#pvBody').innerHTML = previewHtml(body, values);
+  const missing = placeholdersIn(subject, body).filter((k) => !values[k]);
   const warn = $('#pvWarn');
   warn.hidden = !missing.length;
   warn.textContent = missing.length ? `Not filled in yet: ${missing.map((k) => '[' + k + ']').join(', ')}. These stay in the copied text as they are.` : '';
-}
-
-function refreshPlaceholderGrid() {
-  const t = byId(S.selectedId); if (!t) return;
-  const w = work(t);
-  const fields = placeholdersOf(t, w);
-  const grid = $('#phGrid');
-  if (grid.dataset.sig !== fields.join('\u0001')) {
-    const focusPh = document.activeElement?.dataset?.ph;
-    setGrid(t, w);
-    if (focusPh) $(`[data-ph="${CSS.escape(focusPh)}"]`, grid)?.focus();
-  }
-}
-
-function isUseDirty(t, w) {
-  const st = storedText(t, currentVariation(t, w));
-  return (w.subject != null && w.subject !== st.subject) || (w.body != null && w.body !== st.body);
-}
-
-function updateSaveBar() {
-  const t = byId(S.selectedId); if (!t) return;
-  const w = work(t);
-  const dirty = isUseDirty(t, w);
-  const st = storedText(t, currentVariation(t, w));
-  const bar = $('#saveBar');
-  bar.classList.toggle('dirty', dirty);
-  bar.innerHTML = `<span class="msg">${dirty
-    ? `Changed from the saved template. Save to update the ${esc(st.where)}, or cancel to undo.`
-    : `Matches the saved ${esc(st.where)}.`}</span>
-    <button class="btn" type="button" data-act="cancelwork"${dirty ? '' : ' disabled'}>Cancel</button>
-    <button class="btn primary" type="button" data-act="savework"${dirty ? '' : ' disabled'}>Save changes</button>`;
 }
 
 function autosize(ta) {
@@ -755,15 +776,12 @@ async function copyText(text, html) {
 async function doCopy(what) {
   const t = byId(S.selectedId); if (!t) return;
   const w = work(t);
-  const wt = workingText(t, w);
+  const wt = emailText(t, w);
   const { values } = resolvedValues(t, w);
   if (t.variations.length && !w.varId) {
-    const varFields = new Set(['Building Name', ...t.fields]);
-    if (placeholdersIn(wt.subject, wt.body).some((k) => varFields.has(k) && !values[k])) {
-      toast('Select a building first, so its details go into the email.', 'warn');
-      $('#varSel')?.focus();
-      return;
-    }
+    toast('Choose the building first.', 'warn');
+    $('.choice')?.focus();
+    return;
   }
   const subject = plainText(fill(wt.subject, values));
   const body = fill(wt.body, values);
@@ -826,32 +844,6 @@ async function toggleFav(id) {
   }
 }
 
-async function saveWork() {
-  const t = byId(S.selectedId); if (!t) return;
-  const w = work(t);
-  const v = currentVariation(t, w);
-  const next = clone(t);
-  const wt = workingText(t, w);
-  if (v && v.ownEmail) {
-    const nv = next.variations.find((x) => x.id === v.id);
-    nv.subject = wt.subject; nv.body = wt.body;
-  } else {
-    next.subject = wt.subject; next.body = wt.body;
-  }
-  const saved = stamp(next);
-  if (await persistTemplate(saved, t.updatedAt)) {
-    w.subject = null; w.body = null; w.base = saved.updatedAt;
-    renderList(); renderDetail();
-  }
-}
-
-function cancelWork() {
-  const t = byId(S.selectedId); if (!t) return;
-  const w = work(t);
-  w.subject = null; w.body = null;
-  renderDetail();
-}
-
 async function deleteTemplate(id) {
   const t = byId(id); if (!t) return;
   if (!(await ask('Delete template?', `“${t.name}”${t.variations.length ? ` and its ${t.variations.length} building versions` : ''} will be removed from the library. This can't be undone.`, 'Delete'))) return;
@@ -900,8 +892,7 @@ function draftComparable(d) { const { _hasVars, ...rest } = d; return rest; }
 function editorDirty() { return S.mode === 'edit' && S.draft && JSON.stringify(draftComparable(S.draft)) !== S.draftOriginal; }
 
 function knownBuildings() {
-  const seed = window.SEED?.buildings || [];
-  return [...new Set([...seed, ...S.templates.flatMap((t) => t.variations.map((v) => v.building))].filter(Boolean))];
+  return [...new Set([...S.shared.places.map((x) => cleanName(x.name)), ...S.templates.flatMap((t) => t.variations.map((v) => v.building))].filter(Boolean))];
 }
 
 function renderEditor() {
@@ -941,7 +932,7 @@ function renderEditor() {
     <div class="box"><div class="box-h"><h4>Email</h4></div>
       <div class="box-b stack">
         <div class="field"><label class="lbl" for="edSubj">Subject line</label><input class="input" id="edSubj" data-k="subject" value="${esc(d.subject)}"></div>
-        <div class="chips" id="edChips"></div>
+        <div class="chip-rows" id="edChips"></div>
         <div class="field"><div class="lbl-row"><label class="lbl" for="edBody">Email body ${d._hasVars ? '<span class="opt">shared by every building unless a building has its own version</span>' : ''}</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="link" title="Link: select text, then click (Ctrl+K)">${ICON.link}Link</button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div>
           <textarea class="textarea body-ta" id="edBody" data-k="body" spellcheck="true">${esc(d.body)}</textarea>
           <div class="help">Put placeholders in square brackets, like [Customer Name]. Select text and press B (or Ctrl+B) to make it **bold**. Blank lines become paragraph breaks in Outlook.</div></div>
@@ -973,8 +964,9 @@ function renderChips() {
   const d = S.draft;
   const list = [...STANDARD_PLACEHOLDERS, ...(d._hasVars ? d.fields : [])];
   const uniq = [...new Set(list)];
-  $('#edChips').innerHTML = '<span>Insert:</span>' + uniq.map((p) =>
-    `<button type="button" class="chip${d._hasVars && d.fields.includes(p) ? ' f' : ''}" data-ins="${esc(p)}">[${esc(p)}]</button>`).join('');
+  const chip = (x, cls = '') => `<button type="button" class="chip${cls}" data-ins="${esc(x)}">[${esc(x)}]</button>`;
+  $('#edChips').innerHTML = `<div class="chips"><span>Insert:</span>${uniq.map((x) => chip(x, d._hasVars && d.fields.includes(x) ? ' f' : '')).join('')}</div>
+    <div class="chips"><span>From Codes &amp; links:</span>${sharedPlaceholderNames().map((x) => chip(x, ' s')).join('')}</div>`;
 }
 
 function renderVarTable() {
@@ -996,7 +988,7 @@ function renderVarTable() {
     </div></td></tr>` : ''}`).join('');
 
   box.innerHTML = `${dl}
-    <p class="help" style="margin:0 0 8px">Each row is a building. Each column is a detail that changes between buildings. Write the column name in square brackets in the email, e.g. <b>[${esc(cols[0] || 'Price')}]</b>, and the selected building's value goes in automatically. <b>[Building Name]</b> always works.</p>
+    <p class="help" style="margin:0 0 8px">Each row is a building. Each column is a detail that changes between buildings. Write the column name in square brackets in the email, e.g. <b>[${esc(cols[0] || 'Price')}]</b>, and the selected building's value goes in automatically. <b>[Building Name]</b> always works, and so do <b>[Lock Code]</b>, <b>[Building Link]</b> and <b>[Building Map]</b> from Codes &amp; links when the building name matches a place there.</p>
     <div class="vt-wrap"><table class="vt">
       <thead><tr>
         <th>Building</th>
@@ -1008,7 +1000,7 @@ function renderVarTable() {
     <div class="vt-tools">
       <button type="button" class="btn" data-act="addvar">Add building</button>
       <button type="button" class="btn" data-act="addfield">Add detail column</button>
-      ${d.variations.length ? '' : '<button type="button" class="link" data-act="addallvars">Add all standard buildings</button>'}
+      ${PLACE_KINDS.map((k) => { const n = S.shared.places.filter((x) => x.kind === k && cleanName(x.name) && !d.variations.some((v) => norm(v.building) === norm(x.name))).length; return n ? `<button type="button" class="link" data-act="addkind" data-kind="${esc(k)}">Add ${n} ${esc(k.toLowerCase())}${n === 1 ? '' : 's'}</button>` : ''; }).join('')}
     </div>`;
 }
 
@@ -1026,7 +1018,6 @@ function editorInput(e) {
   }
   if (el.id === 'edHasVars') {
     d._hasVars = el.checked;
-    if (el.checked && !d.fields.length) d.fields = ['Price', 'Capacity', 'Minimum Numbers', 'Check-in'];
     $('#edVars').hidden = !el.checked;
     renderVarTable(); renderChips();
     return;
@@ -1131,7 +1122,7 @@ async function exportJson() {
     } catch { /* skip an image that can't be fetched */ }
   }
   $('#toast').hidden = true;
-  const data = { app: 'woodhouse-email-templates', version: 2, exportedAt: new Date().toISOString(), categories: S.categories, templates: S.templates, images };
+  const data = { app: 'woodhouse-email-templates', version: 3, exportedAt: new Date().toISOString(), categories: S.categories, shared: S.shared, templates: S.templates, images };
   download(`woodhouse-email-templates-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
 }
 
@@ -1167,12 +1158,13 @@ function parseCsv(text) {
 
 async function importFile(file) {
   const text = await file.text();
-  let templates = []; let categories = null; let images = [];
+  let templates = []; let categories = null; let images = []; let shared = null;
   const replace = $('#impReplace').checked;
   try {
     if (/\.json$/i.test(file.name) || /^\s*[\[{]/.test(text)) {
       const d = JSON.parse(text);
       templates = Array.isArray(d) ? d : d.templates || [];
+      if (d.shared && typeof d.shared === 'object') shared = normaliseShared(d.shared);
       if (Array.isArray(d.images)) images = d.images.filter((m) => m && m.id && /^data:image\/(png|jpeg|gif);base64,/.test(m.data || ''));
       if (Array.isArray(d.categories)) categories = d.categories.filter((c) => c && c.id && c.name).map((c) => ({ id: String(c.id), name: String(c.name) }));
     } else {
@@ -1228,6 +1220,7 @@ async function importFile(file) {
       S.images.unshift(saved);
     }
     await Store.importAll({ replace, templates, categories });
+    if (shared) { await Store.saveMeta('shared', shared); S.shared = shared; }
     if (replace) S.templates = [];
     for (const t of templates) { const i = S.templates.findIndex((x) => x.id === t.id); if (i >= 0) S.templates[i] = t; else S.templates.push(t); }
     S.categories = categories;
@@ -1306,20 +1299,16 @@ async function leaveOk() {
 async function selectTemplate(id, variationId) {
   if (S.mode === 'edit' && S.draft && S.draft.id === id && !S.draftIsNew) return;
   if (!(await leaveOk())) return;
-  S.selectedId = id;
   const t = byId(id);
-  if (t && variationId) {
-    const w = work(t);
-    if (!isUseDirty(t, w)) { w.varId = variationId; resetVarValues(t, w); }
+  if (t && (id !== S.selectedId || variationId)) {
+    // Opening a template starts a new email: nothing typed yet, a fresh gate
+    // code, and no building chosen unless the search named one.
+    S.work[id] = { varId: variationId || '', values: {}, gate: pickGate() };
   }
+  S.selectedId = id;
   renderList();
   renderDetail();
   $('#detail').scrollTop = 0;
-}
-
-function resetVarValues(t, w) {
-  // Clear any typed-over building details so the new building's values show.
-  for (const k of ['Building Name', ...t.fields]) delete w.values[k];
 }
 
 /* =================================================================== Events */
@@ -1347,7 +1336,7 @@ function bind() {
       e.preventDefault();
       selectTemplate(r.t.id, r.variationId).then(() => {
         // Jump straight to the first thing to fill in.
-        const first = $('#varSel') && !$('#varSel').value ? $('#varSel') : $$('#phGrid [data-ph]').find((i) => !i.value) || $('[data-act="copy"]');
+        const first = $('.choice[aria-pressed="false"]') && !$('.choice[aria-pressed="true"]') ? $('.choice') : $$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]');
         first?.focus();
       });
     } else if (e.key === 'Escape') {
@@ -1392,6 +1381,14 @@ function bind() {
       else openImageDialog(ta);
       return;
     }
+    const ch = e.target.closest('.choice');
+    if (ch && S.mode !== 'edit') {
+      const t = byId(S.selectedId); if (!t) return;
+      work(t).varId = ch.dataset.var;
+      renderDetail();
+      ($$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]'))?.focus();
+      return;
+    }
     const b = e.target.closest('[data-act],[data-ins]');
     if (!b) return;
     if (b.dataset.ins) { insertPlaceholder(b.dataset.ins); return; }
@@ -1404,17 +1401,19 @@ function bind() {
       case 'del': deleteTemplate(S.selectedId); break;
       case 'copy': doCopy('email'); break;
       case 'copysubj': doCopy('subject'); break;
-      case 'savework': saveWork(); break;
-      case 'cancelwork': cancelWork(); break;
-      case 'clearvals': if (t) { work(t).values = {}; setGrid(t, work(t)); updatePreview(); } break;
+      case 'clearvals': if (t) { work(t).values = {}; renderFill(t, work(t)); updatePreview(); $('#fillArea [data-ph]')?.focus(); } break;
+      case 'newgate': if (t) { const w = work(t); w.gate = pickGate(w.gate); renderFill(t, w); updatePreview(); } break;
+      case 'openshared': openShared(); break;
+      case 'addkind':
+        for (const pl of S.shared.places.filter((x) => x.kind === b.dataset.kind && cleanName(x.name))) {
+          if (!S.draft.variations.some((v) => norm(v.building) === norm(pl.name))) S.draft.variations.push({ id: uid('v'), building: pl.name, values: {}, ownEmail: false, subject: '', body: '' });
+        }
+        renderVarTable(); break;
       case 'edcancel':
         if (await leaveOk()) { if (S.draftIsNew) S.selectedId = S.selectedId && byId(S.selectedId) ? S.selectedId : null; renderDetail(); }
         break;
       case 'edsave': saveEditor(); break;
       case 'addvar': S.draft.variations.push({ id: uid('v'), building: '', values: {}, ownEmail: false, subject: '', body: '' }); renderVarTable(); $$('#edVars [data-vk="building"]').pop()?.focus(); break;
-      case 'addallvars':
-        for (const name of window.SEED.buildings) if (!S.draft.variations.some((v) => v.building === name)) S.draft.variations.push({ id: uid('v'), building: name, values: {}, ownEmail: false, subject: '', body: '' });
-        renderVarTable(); break;
       case 'delvar': {
         const v = S.draft.variations[+b.dataset.vi];
         const filled = v.building || Object.values(v.values).some(Boolean);
@@ -1449,13 +1448,12 @@ function bind() {
     const t = byId(S.selectedId); if (!t) return;
     const w = work(t);
     const el = e.target;
-    if (el.dataset.ph) { w.values[el.dataset.ph] = el.value; el.classList.remove('auto'); updatePreview(); return; }
-    if (el.id === 'wSubj') { w.subject = el.value; }
-    else if (el.id === 'wBody') { w.body = el.value; autosize(el); }
-    else return;
-    refreshPlaceholderGrid();
-    updatePreview();
-    updateSaveBar();
+    if (el.dataset.ph) {
+      w.values[el.dataset.ph] = el.value;
+      // Your name is remembered on this computer, so it fills itself in next time.
+      if (el.dataset.ph === 'Your Name') setPref('name', el.value.trim());
+      updatePreview();
+    }
   });
 
   $('#detail').addEventListener('change', async (e) => {
@@ -1463,30 +1461,8 @@ function bind() {
     if (S.mode === 'edit') {
       if (el.dataset.fi != null && el.tagName === 'INPUT') renameField(+el.dataset.fi, el.value);
       else if (el.type === 'checkbox' || el.tagName === 'SELECT') editorInput(e);
-      return;
-    }
-    if (el.id === 'varSel') {
-      const t = byId(S.selectedId); const w = work(t);
-      if (isUseDirty(t, w)) {
-        const nv = t.variations.find((x) => x.id === el.value);
-        const cv = currentVariation(t, w);
-        // Edits only carry over when both buildings share the same email text.
-        if ((cv?.ownEmail || nv?.ownEmail) && !(await ask('Switch building?', 'Your edits to the email text will be lost, because this building uses a different version of the email.', 'Switch'))) { el.value = w.varId; return; }
-        if (cv?.ownEmail || nv?.ownEmail) { w.subject = null; w.body = null; }
-      }
-      w.varId = el.value;
-      resetVarValues(t, w);
-      const wt = workingText(t, w);
-      $('#wSubj').value = wt.subject; $('#wBody').value = wt.body; autosize($('#wBody'));
-      $('#facts').innerHTML = factsHtml(t, currentVariation(t, w));
-      setGrid(t, w);
-      updatePreview(); updateSaveBar();
     }
   });
-
-  $('#detail').addEventListener('toggle', (e) => {
-    if (e.target.classList?.contains('pre')) { const t = byId(S.selectedId); if (t) work(t).showPre = e.target.open; }
-  }, true);
 
   // In an email body: Ctrl+B makes the selection bold, Ctrl+K makes it a link (as in Outlook).
   $('#detail').addEventListener('keydown', (e) => {
@@ -1497,6 +1473,7 @@ function bind() {
   });
 
   bindLinkDialog();
+  bindShared();
 
   bindImageDialog();
 
@@ -1544,7 +1521,7 @@ function bind() {
       : `Templates are saved in the Woodhouse Email Templates database (${S.templates.length} templates, ${S.categories.length} categories), so they are the same on every computer you sign in from.`;
     $('#setDlg').showModal();
   });
-  $('#setName').addEventListener('input', (e) => { setPref('name', e.target.value.trim()); if (S.mode !== 'edit' && S.selectedId) { refreshPlaceholderGridForce(); } });
+  $('#setName').addEventListener('input', (e) => { setPref('name', e.target.value.trim()); if (S.mode !== 'edit' && S.selectedId) renderDetail(); });
   $('#setFont').addEventListener('change', (e) => setPref('font', e.target.value));
   $('#expJson').addEventListener('click', exportJson);
   $('#expCsv').addEventListener('click', exportCsv);
@@ -1553,26 +1530,163 @@ function bind() {
   $('#seedBtn').addEventListener('click', async () => { try { await addSeed(); } catch (e) { toast(e.message, 'err', 7000); } });
 
   window.addEventListener('beforeunload', (e) => {
-    const t = byId(S.selectedId);
-    if (editorDirty() || (t && S.mode === 'use' && isUseDirty(t, work(t)))) { e.preventDefault(); e.returnValue = ''; }
+    if (editorDirty()) { e.preventDefault(); e.returnValue = ''; }
   });
 }
 
-function refreshPlaceholderGridForce() {
-  const t = byId(S.selectedId); if (!t) return;
-  const w = work(t);
-  setGrid(t, w);
-  updatePreview();
+/* ===================================================== Codes & links dialog */
+
+let shTab = 'gate';
+let shTimer = null;
+
+function openShared(tab) {
+  if (tab) shTab = tab;
+  $('#shSaved').textContent = Store.mode === 'local' ? 'Saved in this browser only' : 'Changes save automatically';
+  renderShared();
+  if (!$('#shDlg').open) $('#shDlg').showModal();
+}
+
+function saveShared() {
+  clearTimeout(shTimer);
+  $('#shSaved').textContent = 'Saving…';
+  shTimer = setTimeout(async () => {
+    try {
+      await Store.saveMeta('shared', S.shared);
+      $('#shSaved').textContent = 'All changes saved';
+    } catch (e) { $('#shSaved').textContent = 'Not saved'; toast(e.message, 'err', 7000); }
+    if (S.mode !== 'edit') renderDetail(); else renderChips();
+  }, 450);
+}
+
+const phCode = (name) => (name ? `<button type="button" class="phc" data-copyph="${esc(name)}" title="Copy, to paste into a template">[${esc(name)}]</button>` : '');
+
+function renderShared() {
+  $$('#shTabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === shTab)));
+  const sh = S.shared;
+  const del = (list, i) => `<button type="button" class="x" data-shdel="${list}" data-i="${i}" title="Remove" aria-label="Remove">${ICON.x}</button>`;
+  const inp = (path, val, ph = '') => `<input class="input" data-sh="${path}" value="${esc(val)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">`;
+  const table = (heads, rows, empty) => `<div class="vt-wrap"><table class="vt sh-t"><thead><tr>${heads.map((x) => `<th>${x}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="${heads.length + 1}" class="none" style="padding:10px">${empty}</td></tr>`}</tbody></table></div>`;
+  let h = '';
+
+  if (shTab === 'gate') {
+    h = `<div class="sh-sec">
+        <h5>Rotating gate codes</h5>
+        <p>Each email that uses ${phCode('Gate Code')} gets one of these, picked at random. Update them here whenever the codes change.</p>
+        <div class="code-list">${sh.gateCodes.map((c, i) => `<div class="code-row">${inp('gateCodes.' + i, c, 'e.g. 1234#')}${del('gateCodes', i)}</div>`).join('') || '<p class="none">No codes yet.</p>'}</div>
+        <div><button class="btn" type="button" data-shadd="gateCodes">Add code</button></div>
+      </div>
+      <div class="sh-sec">
+        <h5>Fixed gate code</h5>
+        <p>Used by ${phCode('Fixed Gate Code')}, for example in the chalet emails. It's never part of the rotation.</p>
+        <div class="code-row">${inp('fixedGateCode', sh.fixedGateCode, 'e.g. 1234#')}</div>
+      </div>`;
+  } else if (shTab === 'places') {
+    const dm = defaultMap();
+    h = `<p class="sh-intro">One row per building, chalet, bell tent or camping area. When you choose a building in an email, its row fills in ${phCode('Lock Code')}, ${phCode('Building Link')} and ${phCode('Building Map')}. The name has to match the building's name in the template.</p>` +
+      table(['Name', 'Type', 'Lock code', 'Web page', 'Map', 'Its own link'], sh.places.map((x, i) => `<tr>
+        <td class="w-name">${inp(`places.${i}.name`, x.name, 'e.g. Rymill Centre')}</td>
+        <td class="w-kind"><select class="select" data-sh="places.${i}.kind">${PLACE_KINDS.map((k) => `<option${k === x.kind ? ' selected' : ''}>${k}</option>`).join('')}</select></td>
+        <td class="w-code">${inp(`places.${i}.code`, x.code, 'none')}</td>
+        <td class="w-url">${inp(`places.${i}.link`, x.link, 'https://…')}</td>
+        <td class="w-map"><select class="select" data-sh="places.${i}.map"><option value="">${dm ? 'Default: ' + esc(dm.name) : 'None'}</option>${sh.maps.filter((m) => cleanName(m.name)).map((m) => `<option value="${esc(m.id)}"${m.id === x.map ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></td>
+        <td>${cleanName(x.name) ? phCode(cleanName(x.name) + ' Link') : ''}</td>
+        <td class="c">${del('places', i)}</td></tr>`).join(''), 'No places yet.') +
+      `<div><button class="btn" type="button" data-shadd="places">Add place</button></div>`;
+  } else if (shTab === 'links') {
+    h = `<p class="sh-intro">Web pages to link to, such as activities. In a template, select some words, click <b>Link</b> and choose the saved link, or type its name in square brackets.</p>` +
+      table(['Name', 'Address', 'Use in templates'], sh.links.map((x, i) => `<tr>
+        <td class="w-name">${inp(`links.${i}.name`, x.name, 'e.g. Disc Golf')}</td>
+        <td class="w-url">${inp(`links.${i}.url`, x.url, 'https://…')}</td>
+        <td>${cleanName(x.name) ? phCode(cleanName(x.name) + ' Link') : ''}</td>
+        <td class="c">${del('links', i)}</td></tr>`).join(''), 'No links yet.') +
+      `<div><button class="btn" type="button" data-shadd="links">Add link</button></div>`;
+  } else if (shTab === 'maps') {
+    h = `<p class="sh-intro">Maps used in emails. Replace a picture here and every email that uses it changes too. A place without its own map uses the default: the one called Entry Map, or else the first map here.</p>` +
+      table(['Picture', 'Name', 'Size in the email', 'Use in templates'], sh.maps.map((x, i) => {
+        const im = x.image && imageMeta(x.image);
+        return `<tr>
+        <td class="w-pic"><button type="button" class="mapthumb" data-mappick="${i}" title="${im ? 'Change picture' : 'Choose picture'}">${im ? `<img src="${esc(imageUrl(x.image))}" alt="">` : '<span>Choose picture…</span>'}</button></td>
+        <td class="w-name">${inp(`maps.${i}.name`, x.name, 'e.g. Entry Map')}</td>
+        <td><select class="select" data-sh="maps.${i}.width">${[300, 400, 500, 550, 600, 700, 800].map((n) => `<option value="${n}"${n === +x.width ? ' selected' : ''}>${n} px wide</option>`).join('')}</select></td>
+        <td>${cleanName(x.name) ? phCode(cleanName(x.name)) : ''}</td>
+        <td class="c">${del('maps', i)}</td></tr>`;
+      }).join(''), 'No maps yet.') +
+      `<div><button class="btn" type="button" data-shadd="maps">Add map</button></div>`;
+  } else {
+    h = `<p class="sh-intro">Anything else that appears in several templates, such as a phone number. Change it here and every email picks it up.</p>` +
+      table(['Name', 'Value', 'Use in templates'], sh.details.map((x, i) => `<tr>
+        <td class="w-name">${inp(`details.${i}.name`, x.name, 'e.g. Caretaker Phone')}</td>
+        <td class="w-url">${inp(`details.${i}.value`, x.value)}</td>
+        <td>${cleanName(x.name) ? phCode(cleanName(x.name)) : ''}</td>
+        <td class="c">${del('details', i)}</td></tr>`).join(''), 'Nothing here yet.') +
+      `<div><button class="btn" type="button" data-shadd="details">Add detail</button></div>`;
+  }
+  $('#shBody').innerHTML = h;
+}
+
+function setSharedPath(path, value) {
+  const parts = path.split('.');
+  let o = S.shared;
+  for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]];
+  const k = parts[parts.length - 1];
+  o[k] = k === 'width' ? +value : value;
+}
+
+function bindShared() {
+  const dlg = $('#shDlg');
+  $('#sharedBtn').addEventListener('click', () => openShared());
+  $('#setShared').addEventListener('click', () => { $('#setDlg').close(); openShared(); });
+  $('#shTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { shTab = b.dataset.tab; renderShared(); } });
+  dlg.addEventListener('input', (e) => { const el = e.target; if (el.dataset.sh && el.tagName === 'INPUT') { setSharedPath(el.dataset.sh, el.value); saveShared(); } });
+  dlg.addEventListener('change', (e) => {
+    const el = e.target; if (!el.dataset.sh) return;
+    if (el.tagName === 'SELECT') { setSharedPath(el.dataset.sh, el.value); saveShared(); }
+    if (el.tagName === 'SELECT' || /\.name$/.test(el.dataset.sh)) renderShared(); // refresh the [placeholder] shown next to it
+  });
+  dlg.addEventListener('click', async (e) => {
+    const add = e.target.closest('[data-shadd]');
+    if (add) {
+      const list = add.dataset.shadd;
+      const blank = { gateCodes: '', places: { id: uid('pl'), name: '', kind: 'Building', code: '', link: '', map: '' }, links: { id: uid('ln'), name: '', url: '' }, maps: { id: uid('mp'), name: '', image: '', width: 600 }, details: { id: uid('dt'), name: '', value: '' } }[list];
+      S.shared[list].push(blank);
+      renderShared();
+      $$(`#shBody [data-sh^="${list}."]`).filter((i) => i.tagName === 'INPUT').at(list === 'gateCodes' ? -1 : -(list === 'places' ? 3 : 2))?.focus();
+      return;
+    }
+    const delb = e.target.closest('[data-shdel]');
+    if (delb) {
+      const list = delb.dataset.shdel; const i = +delb.dataset.i; const item = S.shared[list][i];
+      const label = typeof item === 'string' ? item : item.name;
+      if (label && !(await ask('Remove?', `Remove “${label}” from Codes & links? Templates that use it will show it as a blank to fill in.`, 'Remove'))) return;
+      S.shared[list].splice(i, 1);
+      if (list === 'maps') for (const pl of S.shared.places) if (pl.map === item.id) pl.map = '';
+      renderShared(); saveShared();
+      return;
+    }
+    const pc = e.target.closest('[data-copyph]');
+    if (pc) { if (await copyText('[' + pc.dataset.copyph + ']')) toast(`Copied [${pc.dataset.copyph}]. Paste it into a template.`); return; }
+    const mp = e.target.closest('[data-mappick]');
+    if (mp) {
+      const m = S.shared.maps[+mp.dataset.mappick];
+      openImageDialog(null, (id) => {
+        m.image = id;
+        const meta = imageMeta(id);
+        if (!cleanName(m.name) && meta) m.name = meta.name;
+        renderShared(); saveShared();
+      }, m.image || null);
+    }
+  });
 }
 
 /* ======================================================= Bold and images */
 
-function isBodyBox(el) { return el && (el.id === 'wBody' || el.id === 'edBody' || el.dataset?.vk === 'body'); }
+function isBodyBox(el) { return el && (el.id === 'edBody' || el.dataset?.vk === 'body'); }
 
 /** The email body a toolbar button belongs to. */
 function formatTarget(btn) {
   if (btn.dataset.for != null) return $(`#edVars textarea[data-vi="${btn.dataset.for}"][data-vk="body"]`);
-  return S.mode === 'edit' ? $('#edBody') : $('#wBody');
+  return S.mode === 'edit' ? $('#edBody') : null;
 }
 
 function replaceRange(el, start, end, text, selStart, selEnd) {
@@ -1673,6 +1787,9 @@ function openLinkDialog(ta) {
     $('#lnkText').value = sel.replace(/\*\*/g, '');
     $('#lnkUrl').value = looksLikeAddress ? sel : '';
   }
+  const saved = [...S.shared.links, ...S.shared.places].map((x) => cleanName(x.name)).filter(Boolean);
+  $('#lnkSaved').innerHTML = '<option value="">Choose a saved link…</option>' + saved.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  $('#lnkSavedRow').hidden = !saved.length;
   $('#lnkTitle').textContent = LINK_DLG.editing ? 'Edit link' : 'Insert link';
   $('#lnkOk').textContent = LINK_DLG.editing ? 'Update link' : 'Insert link';
   $('#lnkRemove').hidden = !LINK_DLG.editing;
@@ -1697,13 +1814,19 @@ function bindLinkDialog() {
     if (!LINK_DLG.target || !document.contains(LINK_DLG.target)) { dlg.close(); return; }
     back(`{{link:${url}|${text}}}`);
   });
+  $('#lnkSaved').addEventListener('change', (e) => {
+    const n = e.target.value; if (!n) return;
+    $('#lnkUrl').value = '[' + n + ' Link]';
+    if (!$('#lnkText').value.trim()) $('#lnkText').value = n;
+    e.target.value = '';
+  });
   $('#lnkRemove').addEventListener('click', () => {
     const m = LINK_DLG.target.value.slice(LINK_DLG.start, LINK_DLG.end).match(/^\{\{link:([^|}\n]+)\|([^}\n]*)\}\}$/);
     if (m) back(m[2].trim() || m[1]);
   });
 }
 
-const IMG_DLG = { target: null, selected: null };
+const IMG_DLG = { target: null, selected: null, onPick: null };
 
 function imageUses(id) {
   return S.templates.filter((t) => [t.body, ...t.variations.map((v) => v.body)].some((b) => String(b || '').includes('{{image:' + id)));
@@ -1730,9 +1853,13 @@ function renderImageDialog() {
   }
 }
 
-function openImageDialog(target) {
+function openImageDialog(target, onPick = null, current = null) {
   IMG_DLG.target = target;
-  IMG_DLG.selected = null;
+  IMG_DLG.onPick = onPick;
+  IMG_DLG.selected = current;
+  $('#imgDlg h3').textContent = onPick ? 'Choose a map picture' : 'Insert image';
+  $('#imgInsert').textContent = onPick ? 'Use this picture' : 'Insert image';
+  $('#imgSel').classList.toggle('pick', !!onPick);
   $('#imgErr').hidden = true;
   renderImageDialog();
   $('#imgDlg').showModal();
@@ -1756,6 +1883,12 @@ async function uploadFiles(files) {
 }
 
 function insertImageToken() {
+  if (IMG_DLG.onPick) {
+    const id = IMG_DLG.selected; const fn = IMG_DLG.onPick;
+    $('#imgDlg').close(); IMG_DLG.onPick = null;
+    if (id) fn(id);
+    return;
+  }
   const m = imageMeta(IMG_DLG.selected); const el = IMG_DLG.target;
   if (!m || !el || !document.contains(el)) { $('#imgDlg').close(); return; }
   const name = $('#imgName').value.replace(/[|{}\n]/g, ' ').trim() || m.name;
@@ -1824,9 +1957,11 @@ async function boot() {
   S.categories = Array.isArray(data.categories) ? data.categories : clone(window.SEED.categories);
   S.usage = { recent: [], counts: {}, last: {}, ...(data.usage || {}) };
   try { S.images = await Store.listImages(); } catch { /* the library still works without images */ }
+  S.shared = normaliseShared(data.shared || window.SEED.shared);
+  if (!data.shared && (data.initialised || data.templates.length)) Store.saveMeta('shared', S.shared).catch(() => {});
 
   if (!data.initialised && !S.templates.length) {
-    try { await addSeed({ silent: true }); }
+    try { await addSeed({ silent: true }); Store.saveMeta('shared', S.shared).catch(() => {}); }
     catch (e) { toast("Couldn't load the starter examples: " + e.message, 'err', 7000); }
   } else if (!Array.isArray(data.categories)) {
     Store.saveMeta('categories', S.categories).catch(() => {});

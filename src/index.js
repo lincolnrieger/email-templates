@@ -64,12 +64,13 @@ export default {
 //   kind 'template'  id = template id      data = the template
 //   kind 'meta'      id = 'categories'     data = [{id, name}, ...]
 //   kind 'meta'      id = 'usage'          data = {recent: [ids], counts: {id: n}, last: {id: time}}
+//   kind 'meta'      id = 'shared'         data = Codes & links: gate codes, places, links, maps, other details
 //   kind 'meta'      id = 'initialised'    data = true once the starter set is loaded
 //
 //   GET    /api/data                 everything, in one go
 //   PUT    /api/templates/:id        save one template  (body: {template, base})
 //   DELETE /api/templates/:id        delete one template
-//   PUT    /api/meta/:id             save categories / usage (body: {data})
+//   PUT    /api/meta/:id             save categories / usage / shared (body: {data})
 //   POST   /api/import               bulk load (body: {replace, templates, categories})
 //   GET    /api/images               list uploaded images (no image data)
 //   POST   /api/images               upload one image (body: the file; X-Name, X-Width, X-Height headers)
@@ -132,7 +133,7 @@ async function api(request, env, url) {
 
     if (parts[0] === 'meta' && parts[1] && method === 'PUT') {
       const id = parts[1];
-      if (!['categories', 'usage', 'initialised'].includes(id)) return json({ error: 'Unknown setting.' }, 400);
+      if (!['categories', 'usage', 'shared', 'initialised'].includes(id)) return json({ error: 'Unknown setting.' }, 400);
       const body = await request.json();
       await upsert(env, 'meta', id, body?.data ?? null);
       return json({ ok: true });

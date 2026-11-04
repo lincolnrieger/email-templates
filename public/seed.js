@@ -330,5 +330,39 @@ Thanks,
     }),
   ];
 
-  return { categories, templates, buildings };
+  // Starting Codes & links for a brand-new library. Codes are left blank on
+  // purpose: real gate and lock codes are entered in the app, never stored here.
+  const W = 'https://www.woodhouse.org.au/';
+  const place = (name, kind, path) => ({ id: 'pl-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, kind, code: '', link: W + path, map: '' });
+  const link = (name, path) => ({ id: 'ln-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, url: W + path });
+  const shared = {
+    gateCodes: [],
+    fixedGateCode: '',
+    places: [
+      place('Rymill Centre', 'Building', 'accommodation/buildings/rymill/'),
+      place('Old Manor', 'Building', 'accommodation/buildings/manor/'),
+      place('Hooper Bunkhouse', 'Building', 'accommodation/buildings/bunkhouse/'),
+      place("Hanson's Chalet", 'Chalet', 'accommodation/chalets/hansons/'),
+      place("Stephen's Chalet", 'Chalet', 'accommodation/chalets/stephens/'),
+      place("Chamber's Chalet", 'Chalet', 'accommodation/chalets/chambers/'),
+      place('Group Camping', 'Camping', 'accommodation/camping/camping/'),
+    ],
+    links: [
+      link('Chalets', 'accommodation/chalets/chalets/'),
+      link('Bell Tents', 'accommodation/chalets/glamping/'),
+      link('Seeonee', 'teams/seeonee/'),
+      link('Day Visits', 'free/'),
+      link("Cameron's Climb", 'free/activities/climb/'),
+      link('The Labyrinth', 'free/activities/labyrinth/'),
+      link('Disc Golf', 'free/activities/discgolf/'),
+      link('Tube Slide', 'free/activities/tubeslide/'),
+      link('Orienteering', 'free/activities/orienteering/'),
+      link('Laser Skirmish', 'free/activities/laserskirmish/'),
+      link('Challenge Hill', 'free/activities/mlah/'),
+    ],
+    maps: [],
+    details: [{ id: 'dt-caretaker-phone', name: 'Caretaker Phone', value: '' }],
+  };
+
+  return { categories, templates, buildings, shared };
 })();

@@ -11,22 +11,53 @@ paste into Outlook.
    building, category or email body), and partial words count, so
    `hooper avail` works. Use `↑` `↓` to move through results and `Enter` to
    open one; the cursor goes straight to the first thing to fill in.
-2. **Pick the building** if the template has building versions. If your
-   search named a building ("hooper availability"), it's already selected.
-   That building's price, capacity, check-in times and so on go into the email
-   automatically.
-3. **Fill in** the placeholders (`[Customer Name]`, `[Arrival Date]`, …). The
+2. **Choose the building** if the template has building versions. Nothing
+   is chosen for you, and the email doesn't appear until you pick one. The
+   exception: if your search names exactly one building ("hooper", "st george
+   3"), that one is already chosen.
+3. **Fill in** the blanks (`[Customer Name]`, `[Arrival Date]`, …). The
    preview on the right updates as you type. Anything still unfilled is
-   highlighted, and stays as `[Like This]` in the copied text.
-4. **Copy email** and paste into Outlook. Paragraph spacing is kept, and links
-   stay clickable. **Copy subject** copies the subject line separately.
+   highlighted, and stays as `[Like This]` in the copied text. Gate codes,
+   lock codes, links and maps fill themselves in from **Codes & links**;
+   they're listed under *Filled in for you*.
+4. **Copy email** and paste into Outlook. Paragraph spacing, bold, links and
+   maps come across. **Copy subject** copies the subject line separately.
 
-You can also edit the subject and body for one email before copying. Those
-edits aren't saved unless you press **Save changes**; **Cancel** puts the
-saved text back.
+Any last tweaks to the wording are made in Outlook after pasting; this screen
+doesn't edit the email text. To change a template for everyone, use
+**Edit template**.
+
+Opening a template starts a fresh email: blanks are cleared and a new gate
+code is picked. What you type in **Your Name** is remembered on that computer.
 
 Copying a template adds it to **Recently used**. Star a template to add it to
 **Favourites**.
+
+## Codes & links
+
+**Codes & links** (top right) holds the details that many templates share and
+that change often. It's saved in the database, so a change applies to every
+template and every computer straight away. Click any `[name]` shown there to
+copy it for pasting into a template.
+
+| Tab | What it holds | In a template |
+| --- | --- | --- |
+| Gate codes | The **rotating** gate codes; each email picks one at random (*Use a different code* picks another). | `[Gate Code]` |
+| | The **fixed** gate code (e.g. for the chalets), never rotated. | `[Fixed Gate Code]` |
+| Places & lock codes | One row per building, chalet, bell tent or camping area: lock code, web page and map. When an email's building is chosen, its row fills in the three on the right. | `[Lock Code]` `[Building Link]` `[Building Map]` |
+| | Each place's web page by name, for use anywhere. | e.g. `[Rymill Centre Link]` |
+| Links | Activity and other pages. | e.g. `[Disc Golf Link]` |
+| Maps | Map pictures and their size. A place with no map of its own uses *Entry Map* (or the first map). | e.g. `[Entry Map]` |
+| Other details | Anything else shared, e.g. the caretaker's phone. | e.g. `[Caretaker Phone]` |
+
+To link words to one of these, select the words in the template editor, click
+**Link** and choose it under *Saved link*. That writes
+`{{link:[Disc Golf Link]|Disc Golf}}`, which always follows the address saved
+in Codes & links.
+
+A place's name must match the building's name in the template exactly (for
+example *Bell Tent St George 2*). If something in Codes & links is left blank,
+emails that use it show it as a blank to fill in instead.
 
 ## Building variations
 
@@ -39,7 +70,14 @@ building*. You get a table:
   Capacity, Minimum Numbers, Check-in, …). Add, rename or remove columns as
   needed;
 - write the column name in square brackets in the email, e.g. `[Price]`, and
-  the chosen building's value goes in. `[Building Name]` always works.
+  the chosen building's value goes in. `[Building Name]` always works, and so
+  do `[Lock Code]`, `[Building Link]` and `[Building Map]` from Codes & links.
+
+Codes and maps belong in Codes & links rather than in these columns, so they
+can be changed in one place. Use columns for wording that differs between
+buildings (the after-hours building email uses *Full Name* and *Short Name*).
+The **Add 3 chalets**-style buttons under the table add every place of that
+type from Codes & links.
 
 If one building needs a genuinely different email, tick **Own email** on its
 row and write its own subject and body there. Templates that don't need
@@ -101,8 +139,8 @@ The sliders icon, top right:
 
 - **Your name** and **font when pasted into Outlook** (Aptos, Calibri, Arial
   or plain text). These are remembered on that computer only.
-- **Download JSON backup**: the whole library, including building versions
-  and images. It can be imported again.
+- **Download JSON backup**: the whole library, including building versions,
+  images and Codes & links. It can be imported again.
 - **Export CSV**: opens in Excel. One row per template; building versions are
   in the `variations` column as JSON.
 - **Import**: a JSON backup or a CSV in the export's format. Templates with
