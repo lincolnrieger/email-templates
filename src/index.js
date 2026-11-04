@@ -347,21 +347,26 @@ function loginHtml({ error = '', notice = '', next = '/' } = {}) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Sign in · Woodhouse Email Templates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
 <style>
-:root{--bg:#F4F3EF;--surface:#fff;--ink:#23272A;--muted:#646B6E;--line:#D9D7D0;--green:#2F5D46;--green-ink:#fff;--warn-soft:#F6EBD3;color-scheme:light}
+:root{--bg:#F5F6F7;--surface:#fff;--ink:#1A1F24;--ink-2:#3A424A;--muted:#5F6871;--line:#DDE1E5;--line-strong:#C9CED4;--green:#2A5B45;--green-dark:#1F4636;--ring:rgba(42,91,69,.2);--warn:#5A4510;--warn-soft:#FBF4E2;--warn-line:#EAD7A6;color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif}
-.card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:24px 22px}
-.brand{display:flex;align-items:center;gap:10px;margin-bottom:18px}
-.mark{width:30px;height:30px;border-radius:3px;background:var(--green);color:var(--green-ink);display:grid;place-items:center;font-weight:700;font-size:15px}
-h1{font-size:16px;margin:0}
-p{margin:2px 0 0;color:var(--muted);font-size:13px}
-label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
-input{width:100%;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:var(--ink);font:inherit}
-input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 2px rgba(47,93,70,.18)}
-button{margin-top:12px;width:100%;height:36px;border:0;border-radius:3px;background:var(--green);color:var(--green-ink);font:inherit;font-weight:600;cursor:pointer}
-button:hover{background:#264D3A}
-.msg{background:var(--warn-soft);border-radius:3px;padding:8px 10px;font-size:13px;margin-bottom:12px}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--ink);font:14px/1.5 "Inter","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+.card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:28px;box-shadow:0 1px 2px rgba(16,24,32,.04),0 8px 24px rgba(16,24,32,.06)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}
+.mark{width:32px;height:32px;border-radius:6px;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:600;font-size:15px;flex:none}
+h1{font-size:16px;font-weight:600;margin:0;letter-spacing:-.005em}
+p{margin:1px 0 0;color:var(--muted);font-size:13px}
+label{display:block;font-size:12.5px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+input{width:100%;height:38px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;transition:border-color .12s,box-shadow .12s}
+input:hover{border-color:var(--line-strong)}
+input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--ring)}
+button{margin-top:16px;width:100%;height:38px;border:0;border-radius:6px;background:var(--green);color:#fff;font:inherit;font-weight:500;cursor:pointer;transition:background-color .12s}
+button:hover{background:var(--green-dark)}
+button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.msg{background:var(--warn-soft);border:1px solid var(--warn-line);color:var(--warn);border-radius:6px;padding:10px 12px;font-size:13px;margin-bottom:16px}
 </style>
 </head>
 <body>

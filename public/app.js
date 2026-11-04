@@ -645,7 +645,7 @@ function renderDetail() {
     el.innerHTML = `<div class="blank"><div>
       <p><b>${S.templates.length} templates</b> in the library.</p>
       <p>Search or pick one from the list to open it here.</p>
-      <p style="margin-top:10px"><span class="k">/</span> search &nbsp; <span class="k">↑</span> <span class="k">↓</span> move &nbsp; <span class="k">Enter</span> open</p>
+      <p><span class="k">/</span> search &nbsp; <span class="k">↑</span> <span class="k">↓</span> move &nbsp; <span class="k">Enter</span> open</p>
     </div></div>`;
     return;
   }
