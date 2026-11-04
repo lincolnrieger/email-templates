@@ -47,7 +47,7 @@ copy it for pasting into a template.
 | Places & lock codes | One row per building, chalet, bell tent or camping area: lock code, web page and map. When an email's building is chosen, its row fills in the three on the right. | `[Lock Code]` `[Building Link]` `[Building Map]` |
 | | Each place's web page by name, for use anywhere. | e.g. `[Rymill Centre Link]` |
 | Links | Activity and other pages. | e.g. `[Disc Golf Link]` |
-| Maps | Map pictures and their size. A place with no map of its own uses *Entry Map* (or the first map). | e.g. `[Entry Map]` |
+| Maps | Map pictures and their size. A place with no map of its own, or a map still waiting for its picture, shows *Entry Map* (or the first map), so you can set up a map slot first and upload the picture later. | e.g. `[Entry Map]` |
 | Other details | Anything else shared, e.g. the caretaker's phone. | e.g. `[Caretaker Phone]` |
 
 To link words to one of these, select the words in the template editor, click

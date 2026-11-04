@@ -467,6 +467,8 @@ function defaultMap() {
 function mapForPlace(pl) {
   return (pl && pl.map && S.shared.maps.find((m) => m.id === pl.map && m.image && imageMeta(m.image))) || defaultMap();
 }
+/** True when a map slot is still waiting for its picture. */
+function mapMissing(m) { return !(m.image && imageMeta(m.image)); }
 function mapToken(m) {
   return m && m.image && imageMeta(m.image) ? `{{image:${m.image}|${cleanName(m.name)}|${m.width || 600}}}` : '';
 }
@@ -477,7 +479,9 @@ function sharedValues(building, gate) {
   for (const d of sh.details) put(d.name, d.value);
   for (const l of sh.links) if (cleanName(l.name)) put(l.name + ' Link', l.url);
   for (const pl of sh.places) if (cleanName(pl.name)) put(pl.name + ' Link', pl.link);
-  for (const m of sh.maps) put(m.name, mapToken(m));
+  // A map with no picture yet shows the default map, so emails never break
+  // while a map is waiting to be uploaded.
+  for (const m of sh.maps) put(m.name, mapToken(m) || mapToken(defaultMap()));
   put('Fixed Gate Code', sh.fixedGateCode);
   put('Gate Code', gate);
   const pl = building ? placeFor(building) : null;
@@ -1602,11 +1606,11 @@ function renderShared() {
         <td class="c">${del('links', i)}</td></tr>`).join(''), 'No links yet.') +
       `<div><button class="btn" type="button" data-shadd="links">Add link</button></div>`;
   } else if (shTab === 'maps') {
-    h = `<p class="sh-intro">Maps used in emails. Replace a picture here and every email that uses it changes too. A place without its own map uses the default: the one called Entry Map, or else the first map here.</p>` +
+    h = `<p class="sh-intro">Maps used in emails. Replace a picture here and every email that uses it changes too. A place without its own map, or a map still waiting for its picture, uses the default: the one called Entry Map, or else the first map here.${sh.maps.some(mapMissing) ? ` <b>${sh.maps.filter(mapMissing).length} still need a picture.</b>` : ''}</p>` +
       table(['Picture', 'Name', 'Size in the email', 'Use in templates'], sh.maps.map((x, i) => {
         const im = x.image && imageMeta(x.image);
         return `<tr>
-        <td class="w-pic"><button type="button" class="mapthumb" data-mappick="${i}" title="${im ? 'Change picture' : 'Choose picture'}">${im ? `<img src="${esc(imageUrl(x.image))}" alt="">` : '<span>Choose picture…</span>'}</button></td>
+        <td class="w-pic"><button type="button" class="mapthumb" data-mappick="${i}" title="${im ? 'Change picture' : 'Choose picture'}">${im ? `<img src="${esc(imageUrl(x.image))}" alt="">` : '<span>Upload picture…</span>'}</button></td>
         <td class="w-name">${inp(`maps.${i}.name`, x.name, 'e.g. Entry Map')}</td>
         <td><select class="select" data-sh="maps.${i}.width">${[300, 400, 500, 550, 600, 700, 800].map((n) => `<option value="${n}"${n === +x.width ? ' selected' : ''}>${n} px wide</option>`).join('')}</select></td>
         <td>${cleanName(x.name) ? phCode(cleanName(x.name)) : ''}</td>
