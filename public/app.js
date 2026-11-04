@@ -652,6 +652,7 @@ function renderDetail() {
   const w = work(t);
   const v = currentVariation(t, w);
   const needBuilding = t.variations.length > 0 && !v;
+  const kind = choiceKind(t);
   el.innerHTML = `
   <div class="d-head">
     <button class="btn quiet icon back" type="button" data-act="close" aria-label="Back to list">${ICON.back}</button>
@@ -671,7 +672,7 @@ function renderDetail() {
     <div class="col">
       ${t.variations.length ? `
       <section class="panel">
-        <div class="panel-h"><h4>Building</h4>${needBuilding ? '<span class="need">Choose one to start</span>' : ''}</div>
+        <div class="panel-h"><h4>${kind === 'building' ? 'Building' : 'Option'}</h4>${needBuilding ? '<span class="need">Choose one to start</span>' : ''}</div>
         <div class="choices">${t.variations.map((x) => `<button type="button" class="choice" data-var="${esc(x.id)}" aria-pressed="${x.id === w.varId}">${esc(x.building)}</button>`).join('')}</div>
       </section>` : ''}
       <div id="fillArea" class="col"></div>
@@ -684,12 +685,15 @@ function renderDetail() {
         <button class="btn lg" type="button" data-act="copysubj"${needBuilding ? ' disabled' : ''}>Copy subject</button>
       </div>
       ${needBuilding
-        ? '<div class="pv-empty">Choose the building first. Its email will show here.</div>'
+        ? `<div class="pv-empty">Choose the ${kind} first. Its email will show here.</div>`
         : '<div class="mail-subj"><span>Subject</span><span id="pvSubj"></span></div><div class="mail" id="pvBody"></div><div class="unfilled" id="pvWarn" hidden></div>'}
     </section>
   </div>`;
   if (!needBuilding) { renderFill(t, w); updatePreview(); }
 }
+
+/** "building" when every choice is a place in Codes & links, otherwise "option" (e.g. Email to customer / Email for portal). */
+function choiceKind(t) { return t.variations.every((x) => placeFor(x.building)) ? 'building' : 'option'; }
 
 /** How a value from Codes & links is shown in "Filled in for you". */
 function autoDisplay(val) {
@@ -783,7 +787,7 @@ async function doCopy(what) {
   const wt = emailText(t, w);
   const { values } = resolvedValues(t, w);
   if (t.variations.length && !w.varId) {
-    toast('Choose the building first.', 'warn');
+    toast(`Choose the ${choiceKind(t)} first.`, 'warn');
     $('.choice')?.focus();
     return;
   }
