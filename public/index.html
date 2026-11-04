@@ -176,6 +176,8 @@ details.pre[open] summary{margin-bottom:8px}
 .mail{padding:14px 16px 18px;font-family:var(--mail);font-size:14.5px;line-height:1.45;color:#111;overflow-wrap:anywhere;max-height:calc(100vh - 260px);overflow:auto}
 .mail p{margin:0;min-height:1.45em}
 .mail img{vertical-align:bottom}
+.mail a{color:#0563C1;text-decoration:underline}
+.mail a.nolink{color:#5A4510;text-decoration:underline dashed;cursor:help}
 .lbl-row{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-bottom:4px}
 .lbl-row .lbl{margin:0}
 .fmt{display:inline-flex;gap:4px;flex:none}
@@ -426,6 +428,20 @@ dialog::backdrop{background:rgba(25,30,28,.32)}
     <p class="help" style="margin:0">Images are saved in the library and can be reused in any template. Each one has a private, unguessable web address so it shows up for customers.</p>
   </div>
   <div class="dlg-f"><button class="btn danger" type="button" id="imgDelete" style="margin-right:auto" hidden>Delete image</button><button class="btn" data-close>Cancel</button><button class="btn primary" type="button" id="imgInsert" disabled>Insert image</button></div>
+</dialog>
+
+<!-- Link -->
+<dialog id="linkDlg" style="width:min(480px,calc(100vw - 24px))">
+  <form id="lnkForm" novalidate>
+    <div class="dlg-h"><h3 id="lnkTitle">Insert link</h3><button class="btn quiet icon" type="button" data-close aria-label="Close"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="dlg-b">
+      <div class="field"><label class="lbl" for="lnkText">Text to show</label><input class="input" id="lnkText" autocomplete="off" placeholder="e.g. our website"></div>
+      <div class="field"><label class="lbl" for="lnkUrl">Address</label><input class="input" id="lnkUrl" autocomplete="off" spellcheck="false" placeholder="e.g. www.example.com/page or name@example.com">
+        <div class="help">A web address, an email address or a phone number. To fill it in per email, use a placeholder such as [Feedback Link].</div></div>
+      <div class="err" id="lnkErr" hidden></div>
+    </div>
+    <div class="dlg-f"><button class="btn danger" type="button" id="lnkRemove" style="margin-right:auto" hidden>Remove link</button><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit" id="lnkOk">Insert link</button></div>
+  </form>
 </dialog>
 
 <!-- Confirm -->

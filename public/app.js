@@ -18,7 +18,9 @@ const PH = /\[([^\[\]\n]{1,48})\]/g;
 // Formatting inside an email body:
 //   **bold text**
 //   {{image:ID|Description|WIDTH}}   an image from the image library
+//   {{link:ADDRESS|Text to show}}    a link (web address, email address or a [Placeholder])
 const BOLD = /\*\*(?=\S)([^\n]*?\S)\*\*/g;
+const LINK = /\{\{link:([^|}\n]+)\|([^}\n]*)\}\}/g;
 const IMG = /\{\{image:([a-z0-9-]+)(?:\|([^|}\n]*))?(?:\|(\d+))?\}\}/g;
 
 const ICON = {
@@ -31,6 +33,7 @@ const ICON = {
   x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   all: '<svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   clock: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+  link: '<svg class="i" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
   image: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>',
   folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
 };
@@ -482,24 +485,66 @@ function imageHtml(id, name, w, forCopy) {
     : `<img src="${esc(src)}" alt="${name || ''}" width="${width}" style="width:${width}px;max-width:100%;height:auto">`;
 }
 
-function previewHtml(text, values) {
-  // Escape first, then add bold, placeholders and images. esc() leaves
-  // brackets, braces and asterisks alone, so the markers survive it.
-  return String(text || '').split('\n').map((line) => {
-    const html = esc(line)
-      .replace(BOLD, '<b>$1</b>')
-      .replace(PH, (m, k) => {
-        const raw = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null;
-        return raw != null && raw !== '' ? `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>` : `<span class="ph-e">${m}</span>`;
-      })
-      .replace(IMG, (m, id, name, w) => imageHtml(id, name, w, false));
-    return `<p>${html || '&nbsp;'}</p>`;
-  }).join('');
+/** A link address that is safe to put in an email, or null. */
+function safeHref(url) {
+  let u = String(url || '').trim();
+  if (/^www\./i.test(u)) u = 'https://' + u;
+  else if (/^[^\s@/:]+@[^\s@/]+\.[a-z]{2,}$/i.test(u)) u = 'mailto:' + u;
+  return /^(https?:\/\/[^\s]+|mailto:[^\s]+|tel:[+\d][\d\s-]*)$/i.test(u) ? u : null;
 }
 
-/** The copied plain-text version: no bold markers, no images. */
+/** Turn plain web and email addresses in escaped text into links. */
+function autolink(h) {
+  return h.replace(/\b((?:https?:\/\/|www\.)[^\s<\[\]]+[^\s<\[\].,;:!?)])/gi, (m) => `<a href="${m.startsWith('www.') ? 'https://' + m : m}">${m}</a>`)
+    .replace(/(^|[\s(])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, '$1<a href="mailto:$2">$2</a>');
+}
+
+/** One piece of a line (outside any link token): escaped, then bold, placeholders and images. */
+function segmentHtml(text, values, forCopy, inLink) {
+  let h = esc(text);
+  if (!inLink) h = autolink(h);
+  h = h.replace(BOLD, '<b>$1</b>');
+  if (!forCopy) {
+    h = h.replace(PH, (m, k) => {
+      const raw = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null;
+      return raw != null && raw !== '' ? `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>` : `<span class="ph-e">${m}</span>`;
+    });
+  }
+  return h.replace(IMG, (m, id, name, w) => imageHtml(id, name, w, forCopy));
+}
+
+/**
+ * One line of an email body as HTML. Link tokens are handled separately, so
+ * addresses never get mixed up with automatic links or placeholder markers.
+ * For copying, the text has already had its placeholders filled in.
+ */
+function lineHtml(line, values, forCopy) {
+  let out = ''; let last = 0;
+  for (const m of line.matchAll(LINK)) {
+    out += segmentHtml(line.slice(last, m.index), values, forCopy, false);
+    const href = safeHref(fill(m[1], values));
+    const inner = segmentHtml(m[2].trim() || m[1], values, forCopy, true);
+    if (forCopy) out += href ? `<a href="${esc(href)}">${inner}</a>` : inner;
+    else out += href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(href)}">${inner}</a>`
+      : `<a class="nolink" title="Link address still to fill in: ${esc(m[1])}">${inner}</a>`;
+    last = m.index + m[0].length;
+  }
+  return out + segmentHtml(line.slice(last), values, forCopy, false);
+}
+
+function previewHtml(text, values) {
+  return String(text || '').split('\n').map((line) => `<p>${lineHtml(line, values, false) || '&nbsp;'}</p>`).join('');
+}
+
+/** The copied plain-text version: links as "text (address)", no bold markers, no images. */
 function plainText(text) {
-  return String(text || '').replace(BOLD, '$1').replace(IMG, '').replace(/[ \t]+$/gm, '');
+  return String(text || '')
+    .replace(LINK, (m, url, label) => {
+      const t = label.trim(); const u = url.trim();
+      return !t || t === u ? u : `${t} (${u.replace(/^mailto:/i, '')})`;
+    })
+    .replace(BOLD, '$1').replace(IMG, '').replace(/[ \t]+$/gm, '');
 }
 
 function renderDetail() {
@@ -552,7 +597,7 @@ function renderDetail() {
         <div class="box-h"><h4>Email</h4><span class="help sp" style="margin:0">Edits here change this email only, unless you save them.</span></div>
         <div class="box-b stack">
           <div class="field"><label class="lbl" for="wSubj">Subject</label><input class="input" id="wSubj"></div>
-          <div class="field"><div class="lbl-row"><label class="lbl" for="wBody">Body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea body-ta" id="wBody" spellcheck="true"></textarea></div>
+          <div class="field"><div class="lbl-row"><label class="lbl" for="wBody">Body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="link" title="Link: select text, then click (Ctrl+K)">${ICON.link}Link</button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea body-ta" id="wBody" spellcheck="true"></textarea></div>
         </div>
         <div class="savebar" id="saveBar"></div>
       </div>
@@ -673,12 +718,10 @@ function autosize(ta) {
 function emailHtml(text) {
   const font = prefs().font || 'Aptos';
   const family = font === 'Calibri' ? 'Calibri, Arial, sans-serif' : font === 'Arial' ? 'Arial, Helvetica, sans-serif' : 'Aptos, Calibri, Arial, sans-serif';
-  const linkify = (s) => s.replace(/\b(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1">$1</a>')
-    .replace(/(^|[\s(])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, '$1<a href="mailto:$2">$2</a>');
   // One <p> per line with no margins: Outlook keeps blank lines as blank
   // paragraphs, so the pasted spacing matches the preview exactly.
   const lines = String(text).split('\n').map((l) => {
-    const html = linkify(esc(l)).replace(BOLD, '<b>$1</b>').replace(IMG, (m, id, name, w) => imageHtml(id, name, w, true));
+    const html = lineHtml(l, {}, true);
     return `<p style="margin:0">${l.trim() ? html : '&nbsp;'}</p>`;
   }).join('');
   return `<div style="font-family:${family};font-size:11pt;color:#000000">${lines}</div>`;
@@ -899,7 +942,7 @@ function renderEditor() {
       <div class="box-b stack">
         <div class="field"><label class="lbl" for="edSubj">Subject line</label><input class="input" id="edSubj" data-k="subject" value="${esc(d.subject)}"></div>
         <div class="chips" id="edChips"></div>
-        <div class="field"><div class="lbl-row"><label class="lbl" for="edBody">Email body ${d._hasVars ? '<span class="opt">shared by every building unless a building has its own version</span>' : ''}</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div>
+        <div class="field"><div class="lbl-row"><label class="lbl" for="edBody">Email body ${d._hasVars ? '<span class="opt">shared by every building unless a building has its own version</span>' : ''}</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="link" title="Link: select text, then click (Ctrl+K)">${ICON.link}Link</button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div>
           <textarea class="textarea body-ta" id="edBody" data-k="body" spellcheck="true">${esc(d.body)}</textarea>
           <div class="help">Put placeholders in square brackets, like [Customer Name]. Select text and press B (or Ctrl+B) to make it **bold**. Blank lines become paragraph breaks in Outlook.</div></div>
       </div>
@@ -949,7 +992,7 @@ function renderVarTable() {
     </tr>
     ${v.ownEmail ? `<tr class="own"><td colspan="${cols.length + 3}"><div class="stack">
       <div class="field"><label class="lbl">${esc(v.building || 'This building')}: subject</label><input class="input" data-vi="${i}" data-vk="subject" value="${esc(v.subject)}"></div>
-      <div class="field"><div class="lbl-row"><label class="lbl">${esc(v.building || 'This building')}: email body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" data-for="${i}" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" data-for="${i}" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea" rows="8" data-vi="${i}" data-vk="body">${esc(v.body)}</textarea></div>
+      <div class="field"><div class="lbl-row"><label class="lbl">${esc(v.building || 'This building')}: email body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" data-for="${i}" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="link" data-for="${i}" title="Link: select text, then click (Ctrl+K)">${ICON.link}Link</button><button type="button" class="fbtn" data-fmt="image" data-for="${i}" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea" rows="8" data-vi="${i}" data-vk="body">${esc(v.body)}</textarea></div>
     </div></td></tr>` : ''}`).join('');
 
   box.innerHTML = `${dl}
@@ -1345,6 +1388,7 @@ function bind() {
       const ta = formatTarget(f);
       if (!ta) return;
       if (f.dataset.fmt === 'bold') toggleBold(ta);
+      else if (f.dataset.fmt === 'link') openLinkDialog(ta);
       else openImageDialog(ta);
       return;
     }
@@ -1444,12 +1488,15 @@ function bind() {
     if (e.target.classList?.contains('pre')) { const t = byId(S.selectedId); if (t) work(t).showPre = e.target.open; }
   }, true);
 
-  // Ctrl+B / Cmd+B in an email body makes the selection bold.
+  // In an email body: Ctrl+B makes the selection bold, Ctrl+K makes it a link (as in Outlook).
   $('#detail').addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'b' && e.target.tagName === 'TEXTAREA' && isBodyBox(e.target)) {
-      e.preventDefault(); toggleBold(e.target);
-    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.target.tagName !== 'TEXTAREA' || !isBodyBox(e.target)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'b') { e.preventDefault(); toggleBold(e.target); }
+    if (k === 'k') { e.preventDefault(); e.stopPropagation(); openLinkDialog(e.target); }
   });
+
+  bindLinkDialog();
 
   bindImageDialog();
 
@@ -1588,6 +1635,72 @@ async function prepareImage(file) {
     }
     return { blob, width: c.width, height: c.height };
   } finally { URL.revokeObjectURL(url); }
+}
+
+const LINK_DLG = { target: null, start: 0, end: 0, editing: false };
+
+/** Tidy what was typed into the address box; returns '' if it isn't usable. */
+function normaliseAddress(raw) {
+  let u = String(raw || '').trim().replace(/\|/g, '%7C').replace(/\}/g, '%7D').replace(/\s+/g, '');
+  if (!u) return '';
+  if (/^\[[^\[\]]+\]$/.test(u)) return u;                       // a placeholder, filled in per email
+  if (/^www\./i.test(u)) u = 'https://' + u;
+  else if (/^[^\s@/:]+@[^\s@/]+\.[a-z]{2,}$/i.test(u)) u = 'mailto:' + u;
+  else if (/^\+?[\d\s()-]{6,}$/.test(raw.trim())) u = 'tel:' + raw.trim().replace(/[^\d+]/g, '');
+  else if (!/^[a-z]+:/i.test(u) && /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(u)) u = 'https://' + u;
+  return safeHref(u) ? u : '';
+}
+
+function openLinkDialog(ta) {
+  const v = ta.value;
+  let s0 = ta.selectionStart, s1 = ta.selectionEnd;
+  LINK_DLG.target = ta; LINK_DLG.editing = false;
+  // Cursor on an existing link: edit that link.
+  for (const m of v.matchAll(LINK)) {
+    if (m.index <= s0 && s1 <= m.index + m[0].length) {
+      LINK_DLG.editing = true; LINK_DLG.start = m.index; LINK_DLG.end = m.index + m[0].length;
+      $('#lnkText').value = m[2]; $('#lnkUrl').value = m[1].replace(/^mailto:/i, '');
+      break;
+    }
+  }
+  if (!LINK_DLG.editing) {
+    while (s1 > s0 && /\s/.test(v[s1 - 1])) s1--;
+    while (s0 < s1 && /\s/.test(v[s0])) s0++;
+    const sel = v.slice(s0, s1);
+    if (sel.includes('\n')) { toast('Select text on a single line to make a link.', 'warn'); return; }
+    LINK_DLG.start = s0; LINK_DLG.end = s1;
+    const looksLikeAddress = sel && !/\s/.test(sel) && !!normaliseAddress(sel) && /[.@:]/.test(sel);
+    $('#lnkText').value = sel.replace(/\*\*/g, '');
+    $('#lnkUrl').value = looksLikeAddress ? sel : '';
+  }
+  $('#lnkTitle').textContent = LINK_DLG.editing ? 'Edit link' : 'Insert link';
+  $('#lnkOk').textContent = LINK_DLG.editing ? 'Update link' : 'Insert link';
+  $('#lnkRemove').hidden = !LINK_DLG.editing;
+  $('#lnkErr').hidden = true;
+  $('#linkDlg').showModal();
+  ($('#lnkText').value ? $('#lnkUrl') : $('#lnkText')).focus();
+}
+
+function bindLinkDialog() {
+  const dlg = $('#linkDlg');
+  const back = (text, caret) => { dlg.close(); replaceRange(LINK_DLG.target, LINK_DLG.start, LINK_DLG.end, text, caret ?? LINK_DLG.start + text.length, caret ?? LINK_DLG.start + text.length); };
+  $('#lnkForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = $('#lnkUrl').value;
+    const url = normaliseAddress(raw);
+    if (!url) {
+      const err = $('#lnkErr');
+      err.textContent = raw.trim() ? 'That doesn\'t look like a web or email address. Try something like www.example.com or name@example.com.' : 'Enter the address the link should go to.';
+      err.hidden = false; $('#lnkUrl').focus(); return;
+    }
+    const text = $('#lnkText').value.replace(/[{}|\n]/g, ' ').replace(/\s+/g, ' ').trim() || url.replace(/^mailto:/i, '');
+    if (!LINK_DLG.target || !document.contains(LINK_DLG.target)) { dlg.close(); return; }
+    back(`{{link:${url}|${text}}}`);
+  });
+  $('#lnkRemove').addEventListener('click', () => {
+    const m = LINK_DLG.target.value.slice(LINK_DLG.start, LINK_DLG.end).match(/^\{\{link:([^|}\n]+)\|([^}\n]*)\}\}$/);
+    if (m) back(m[2].trim() || m[1]);
+  });
 }
 
 const IMG_DLG = { target: null, selected: null };

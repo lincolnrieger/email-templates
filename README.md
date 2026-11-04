@@ -47,11 +47,20 @@ building versions just leave the box unticked.
 
 ## Bold text and images
 
-Above every email body there's a **B** button and an **Image** button.
+Above every email body there are **B**, **Link** and **Image** buttons.
 
 - **Bold:** select some text and click **B** (or press Ctrl+B). In the editor
   it shows as `**like this**`; in the preview and in Outlook it's bold. Do the
   same again to remove it.
+- **Links:** select the words to link and click **Link** (or press Ctrl+K,
+  as in Outlook). Enter a web address, an email address or a phone number;
+  `www.` and `https://` are added for you. In the editor a link shows as
+  `{{link:https://…|the words}}`; in the preview and in Outlook it's a normal
+  clickable link. To change or remove a link, put the cursor anywhere inside
+  it and click **Link** again. The address can be a placeholder, e.g.
+  `[Feedback Link]`, and then it's filled in per email like any other.
+  Web and email addresses typed straight into the text become links
+  automatically too.
 - **Images:** put the cursor where the picture should go and click
   **Image**. Upload a picture (or drag one in, or paste one with Ctrl+V), give
   it a description, pick a size (Small 200 px, Medium 400 px, Large 600 px or
@@ -73,7 +82,8 @@ Depending on the recipient's email settings, they may have to click
 "download pictures" before linked images appear. If a picture must always
 show, attach it in Outlook instead.
 
-Copying as **plain text** (Settings) leaves out bold and images.
+Copying as **plain text** (Settings) leaves out bold and images, and writes
+links as "the words (address)".
 
 ## Placeholders
 

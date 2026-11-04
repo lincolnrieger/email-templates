@@ -285,7 +285,7 @@ We appreciate you raising this with us, as it helps us improve.` + SIGN,
 
 Thank you for choosing Woodhouse Adventure Park. We hope your group enjoyed their time with us.
 
-We'd really value your feedback. It only takes a couple of minutes: [Feedback Link]
+We'd really value your feedback. It only takes a couple of minutes: {{link:[Feedback Link]|share your feedback here}}.
 
 If you'd like to book again, just reply to this email and I can check dates for you.` + SIGN,
       keywords: ['thank you', 'feedback', 'survey', 'after stay', 'review'],
