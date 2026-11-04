@@ -15,6 +15,11 @@ const uid = (p) => p + '-' + Date.now().toString(36) + Math.random().toString(36
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const PH = /\[([^\[\]\n]{1,48})\]/g;
+// Formatting inside an email body:
+//   **bold text**
+//   {{image:ID|Description|WIDTH}}   an image from the image library
+const BOLD = /\*\*(?=\S)([^\n]*?\S)\*\*/g;
+const IMG = /\{\{image:([a-z0-9-]+)(?:\|([^|}\n]*))?(?:\|(\d+))?\}\}/g;
 
 const ICON = {
   star: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
@@ -26,6 +31,7 @@ const ICON = {
   x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   all: '<svg class="i" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   clock: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+  image: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg>',
   folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
 };
 
@@ -140,6 +146,42 @@ const Store = {
     }
     await this._send('POST', '/api/import', { replace: !!replace, templates, categories });
   },
+
+  async listImages() {
+    if (this.mode === 'local') {
+      let d = {};
+      try { d = JSON.parse(localStorage.getItem(LOCAL_KEY) || '{}'); } catch {}
+      return d.images || [];
+    }
+    const res = await fetch('/api/images', { cache: 'no-store' });
+    if (!res.ok) throw new Error('The image library could not be loaded.');
+    return (await res.json()).images || [];
+  },
+
+  async uploadImage(blob, meta) {
+    if (this.mode === 'local') {
+      const data = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(blob); });
+      const img = { id: meta.id || 'local-' + Math.random().toString(36).slice(2, 12), name: meta.name, type: blob.type, width: meta.width, height: meta.height, size: blob.size, created_at: Date.now(), data };
+      try { this._local((d) => { d.images = [img, ...(d.images || [])]; }); }
+      catch { throw new Error("This browser's storage is full, so the image couldn't be saved."); }
+      return img;
+    }
+    let res;
+    try {
+      res = await fetch('/api/images', {
+        method: 'POST', body: blob,
+        headers: { 'Content-Type': blob.type, 'X-Name': encodeURIComponent(meta.name), 'X-Width': String(meta.width || 0), 'X-Height': String(meta.height || 0), ...(meta.id ? { 'X-Id': meta.id } : {}) },
+      });
+    } catch { throw new Error("Couldn't upload: the server can't be reached."); }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || 'Upload failed (' + res.status + ').');
+    return d.image;
+  },
+
+  async deleteImage(id) {
+    if (this.mode === 'local') { this._local((d) => { d.images = (d.images || []).filter((x) => x.id !== id); }); return; }
+    await this._send('DELETE', '/api/images/' + encodeURIComponent(id));
+  },
 };
 
 /* ==================================================================== State */
@@ -148,6 +190,7 @@ const S = {
   templates: [],
   categories: [],
   usage: { recent: [], counts: {}, last: {} },
+  images: [],           // image library: {id, name, type, width, height, size}
   view: 'all',          // 'all' | 'fav' | 'recent' | 'cat:<id>' | 'cat:' (uncategorised)
   query: '',
   sort: 'best',
@@ -411,15 +454,52 @@ function fill(text, values) {
   return String(text || '').replace(PH, (m, k) => (values[k] != null && values[k] !== '' ? values[k] : m));
 }
 
+function imageMeta(id) { return S.images.find((x) => x.id === id); }
+
+/** Where an image can be loaded from. Copied emails need the full address. */
+function imageUrl(id, absolute) {
+  const m = imageMeta(id);
+  if (!m) return null;
+  if (m.data) return m.data; // browser-only storage keeps the picture itself
+  return (absolute ? location.origin : '') + '/img/' + id;
+}
+
+/** Display size: the width written in the email (or up to 600 px), height kept in proportion. */
+function imageSize(m, w) {
+  const width = Math.max(20, Math.min(+w || Math.min(m.width || 600, 600), 1400));
+  const height = m.width && m.height ? Math.round(width * m.height / m.width) : 0;
+  return { width, height };
+}
+
+/** `name` arrives already escaped, because it comes from an escaped line. */
+function imageHtml(id, name, w, forCopy) {
+  const m = imageMeta(id);
+  const src = imageUrl(id, forCopy);
+  if (!m || !src) return forCopy ? '' : `<span class="ph-e">[missing image${name ? ': ' + name : ''}]</span>`;
+  const { width, height } = imageSize(m, w);
+  return forCopy
+    ? `<img src="${esc(src)}" alt="${name || ''}" width="${width}"${height ? ` height="${height}"` : ''} style="width:${width}px;${height ? `height:${height}px;` : ''}border:0">`
+    : `<img src="${esc(src)}" alt="${name || ''}" width="${width}" style="width:${width}px;max-width:100%;height:auto">`;
+}
+
 function previewHtml(text, values) {
-  // Escape first, then mark placeholders. Brackets are not touched by esc().
+  // Escape first, then add bold, placeholders and images. esc() leaves
+  // brackets, braces and asterisks alone, so the markers survive it.
   return String(text || '').split('\n').map((line) => {
-    const html = esc(line).replace(PH, (m, k) => {
-      const raw = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null;
-      return raw != null && raw !== '' ? `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>` : `<span class="ph-e">${m}</span>`;
-    });
+    const html = esc(line)
+      .replace(BOLD, '<b>$1</b>')
+      .replace(PH, (m, k) => {
+        const raw = Object.prototype.hasOwnProperty.call(values, k) ? values[k] : null;
+        return raw != null && raw !== '' ? `<span class="ph-f" title="[${esc(k)}]">${esc(raw)}</span>` : `<span class="ph-e">${m}</span>`;
+      })
+      .replace(IMG, (m, id, name, w) => imageHtml(id, name, w, false));
     return `<p>${html || '&nbsp;'}</p>`;
   }).join('');
+}
+
+/** The copied plain-text version: no bold markers, no images. */
+function plainText(text) {
+  return String(text || '').replace(BOLD, '$1').replace(IMG, '').replace(/[ \t]+$/gm, '');
 }
 
 function renderDetail() {
@@ -472,7 +552,7 @@ function renderDetail() {
         <div class="box-h"><h4>Email</h4><span class="help sp" style="margin:0">Edits here change this email only, unless you save them.</span></div>
         <div class="box-b stack">
           <div class="field"><label class="lbl" for="wSubj">Subject</label><input class="input" id="wSubj"></div>
-          <div class="field"><label class="lbl" for="wBody">Body</label><textarea class="textarea body-ta" id="wBody" spellcheck="true"></textarea></div>
+          <div class="field"><div class="lbl-row"><label class="lbl" for="wBody">Body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea body-ta" id="wBody" spellcheck="true"></textarea></div>
         </div>
         <div class="savebar" id="saveBar"></div>
       </div>
@@ -597,7 +677,10 @@ function emailHtml(text) {
     .replace(/(^|[\s(])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, '$1<a href="mailto:$2">$2</a>');
   // One <p> per line with no margins: Outlook keeps blank lines as blank
   // paragraphs, so the pasted spacing matches the preview exactly.
-  const lines = String(text).split('\n').map((l) => `<p style="margin:0">${l.trim() ? linkify(esc(l)) : '&nbsp;'}</p>`).join('');
+  const lines = String(text).split('\n').map((l) => {
+    const html = linkify(esc(l)).replace(BOLD, '<b>$1</b>').replace(IMG, (m, id, name, w) => imageHtml(id, name, w, true));
+    return `<p style="margin:0">${l.trim() ? html : '&nbsp;'}</p>`;
+  }).join('');
   return `<div style="font-family:${family};font-size:11pt;color:#000000">${lines}</div>`;
 }
 
@@ -639,11 +722,11 @@ async function doCopy(what) {
       return;
     }
   }
-  const subject = fill(wt.subject, values);
+  const subject = plainText(fill(wt.subject, values));
   const body = fill(wt.body, values);
   const ok = what === 'subject'
     ? await copyText(subject)
-    : await copyText(body, prefs().font === 'plain' ? null : emailHtml(body));
+    : await copyText(plainText(body), prefs().font === 'plain' ? null : emailHtml(body));
   if (!ok) { toast("Couldn't copy. Your browser blocked the clipboard.", 'err'); return; }
   const missing = placeholdersIn(what === 'subject' ? wt.subject : wt.body).filter((k) => !values[k]);
   toast((what === 'subject' ? 'Subject copied' : 'Email copied') + (missing.length ? `. Still to fill in: ${missing.map((k) => '[' + k + ']').join(', ')}` : '. Paste it into Outlook.'), missing.length ? 'warn' : '');
@@ -816,9 +899,9 @@ function renderEditor() {
       <div class="box-b stack">
         <div class="field"><label class="lbl" for="edSubj">Subject line</label><input class="input" id="edSubj" data-k="subject" value="${esc(d.subject)}"></div>
         <div class="chips" id="edChips"></div>
-        <div class="field"><label class="lbl" for="edBody">Email body ${d._hasVars ? '<span class="opt">shared by every building unless a building has its own version</span>' : ''}</label>
+        <div class="field"><div class="lbl-row"><label class="lbl" for="edBody">Email body ${d._hasVars ? '<span class="opt">shared by every building unless a building has its own version</span>' : ''}</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" title="Insert an image">${ICON.image}Image</button></span></div>
           <textarea class="textarea body-ta" id="edBody" data-k="body" spellcheck="true">${esc(d.body)}</textarea>
-          <div class="help">Put placeholders in square brackets, like [Customer Name]. Blank lines become paragraph breaks when pasted into Outlook.</div></div>
+          <div class="help">Put placeholders in square brackets, like [Customer Name]. Select text and press B (or Ctrl+B) to make it **bold**. Blank lines become paragraph breaks in Outlook.</div></div>
       </div>
     </div>
 
@@ -866,7 +949,7 @@ function renderVarTable() {
     </tr>
     ${v.ownEmail ? `<tr class="own"><td colspan="${cols.length + 3}"><div class="stack">
       <div class="field"><label class="lbl">${esc(v.building || 'This building')}: subject</label><input class="input" data-vi="${i}" data-vk="subject" value="${esc(v.subject)}"></div>
-      <div class="field"><label class="lbl">${esc(v.building || 'This building')}: email body</label><textarea class="textarea" rows="8" data-vi="${i}" data-vk="body">${esc(v.body)}</textarea></div>
+      <div class="field"><div class="lbl-row"><label class="lbl">${esc(v.building || 'This building')}: email body</label><span class="fmt"><button type="button" class="fbtn" data-fmt="bold" data-for="${i}" title="Bold: select text, then click (Ctrl+B)"><b>B</b></button><button type="button" class="fbtn" data-fmt="image" data-for="${i}" title="Insert an image">${ICON.image}Image</button></span></div><textarea class="textarea" rows="8" data-vi="${i}" data-vk="body">${esc(v.body)}</textarea></div>
     </div></td></tr>` : ''}`).join('');
 
   box.innerHTML = `${dl}
@@ -994,8 +1077,18 @@ function download(name, text, type) {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-function exportJson() {
-  const data = { app: 'woodhouse-email-templates', version: 1, exportedAt: new Date().toISOString(), categories: S.categories, templates: S.templates };
+async function exportJson() {
+  // Images go into the backup too, so restoring it brings them back.
+  const images = [];
+  if (S.images.length) toast('Preparing backup…', '', 20000);
+  for (const m of S.images) {
+    try {
+      const data = m.data || await fetch('/img/' + m.id).then((r) => (r.ok ? r.blob() : null)).then((b) => b && new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b); }));
+      if (data) images.push({ id: m.id, name: m.name, type: m.type, width: m.width, height: m.height, data });
+    } catch { /* skip an image that can't be fetched */ }
+  }
+  $('#toast').hidden = true;
+  const data = { app: 'woodhouse-email-templates', version: 2, exportedAt: new Date().toISOString(), categories: S.categories, templates: S.templates, images };
   download(`woodhouse-email-templates-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
 }
 
@@ -1031,12 +1124,13 @@ function parseCsv(text) {
 
 async function importFile(file) {
   const text = await file.text();
-  let templates = []; let categories = null;
+  let templates = []; let categories = null; let images = [];
   const replace = $('#impReplace').checked;
   try {
     if (/\.json$/i.test(file.name) || /^\s*[\[{]/.test(text)) {
       const d = JSON.parse(text);
       templates = Array.isArray(d) ? d : d.templates || [];
+      if (Array.isArray(d.images)) images = d.images.filter((m) => m && m.id && /^data:image\/(png|jpeg|gif);base64,/.test(m.data || ''));
       if (Array.isArray(d.categories)) categories = d.categories.filter((c) => c && c.id && c.name).map((c) => ({ id: String(c.id), name: String(c.name) }));
     } else {
       const rows = parseCsv(text);
@@ -1079,6 +1173,17 @@ async function importFile(file) {
   if (!(await ask('Import templates?', msg, replace ? 'Replace library' : 'Import'))) return;
   setStatus('busy', 'Saving');
   try {
+    for (const m of images) {
+      if (imageMeta(m.id)) continue;
+      const blob = await (await fetch(m.data)).blob();
+      const saved = await Store.uploadImage(blob, { id: m.id, name: m.name || 'Image', width: m.width, height: m.height });
+      if (saved.id !== m.id) {
+        // Couldn't keep the old address: point the templates at the new one.
+        const swap = (t) => String(t || '').split('{{image:' + m.id).join('{{image:' + saved.id);
+        for (const t of templates) { t.body = swap(t.body); t.variations.forEach((v) => { v.body = swap(v.body); }); }
+      }
+      S.images.unshift(saved);
+    }
     await Store.importAll({ replace, templates, categories });
     if (replace) S.templates = [];
     for (const t of templates) { const i = S.templates.findIndex((x) => x.id === t.id); if (i >= 0) S.templates[i] = t; else S.templates.push(t); }
@@ -1235,6 +1340,14 @@ function bind() {
 
   // ---- Detail pane: clicks
   $('#detail').addEventListener('click', async (e) => {
+    const f = e.target.closest('[data-fmt]');
+    if (f) {
+      const ta = formatTarget(f);
+      if (!ta) return;
+      if (f.dataset.fmt === 'bold') toggleBold(ta);
+      else openImageDialog(ta);
+      return;
+    }
     const b = e.target.closest('[data-act],[data-ins]');
     if (!b) return;
     if (b.dataset.ins) { insertPlaceholder(b.dataset.ins); return; }
@@ -1331,6 +1444,15 @@ function bind() {
     if (e.target.classList?.contains('pre')) { const t = byId(S.selectedId); if (t) work(t).showPre = e.target.open; }
   }, true);
 
+  // Ctrl+B / Cmd+B in an email body makes the selection bold.
+  $('#detail').addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'b' && e.target.tagName === 'TEXTAREA' && isBodyBox(e.target)) {
+      e.preventDefault(); toggleBold(e.target);
+    }
+  });
+
+  bindImageDialog();
+
   // Remember where the cursor was, so Insert puts placeholders in the right box.
   $('#detail').addEventListener('focusin', (e) => { if (e.target.id === 'edSubj' || e.target.id === 'edBody' || e.target.dataset?.vk === 'body' || e.target.dataset?.vk === 'subject') bind.lastText = e.target; });
 
@@ -1396,6 +1518,172 @@ function refreshPlaceholderGridForce() {
   updatePreview();
 }
 
+/* ======================================================= Bold and images */
+
+function isBodyBox(el) { return el && (el.id === 'wBody' || el.id === 'edBody' || el.dataset?.vk === 'body'); }
+
+/** The email body a toolbar button belongs to. */
+function formatTarget(btn) {
+  if (btn.dataset.for != null) return $(`#edVars textarea[data-vi="${btn.dataset.for}"][data-vk="body"]`);
+  return S.mode === 'edit' ? $('#edBody') : $('#wBody');
+}
+
+function replaceRange(el, start, end, text, selStart, selEnd) {
+  el.focus();
+  el.setSelectionRange(start, end);
+  // execCommand keeps the browser's undo history (Ctrl+Z) working; fall back if it's unavailable.
+  if (!document.execCommand || !document.execCommand('insertText', false, text)) {
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  el.setSelectionRange(selStart, selEnd);
+}
+
+function toggleBold(el) {
+  let s0 = el.selectionStart, s1 = el.selectionEnd;
+  const v = el.value;
+  // Leave out spaces at the edges of the selection (double-click selects a trailing space).
+  while (s1 > s0 && /\s/.test(v[s1 - 1])) s1--;
+  while (s0 < s1 && /\s/.test(v[s0])) s0++;
+  const sel = v.slice(s0, s1);
+  if (sel.startsWith('**') && sel.endsWith('**') && sel.length >= 4) {
+    replaceRange(el, s0, s1, sel.slice(2, -2), s0, s1 - 4);
+  } else if (v.slice(s0 - 2, s0) === '**' && v.slice(s1, s1 + 2) === '**') {
+    replaceRange(el, s0 - 2, s1 + 2, sel, s0 - 2, s1 - 2);
+  } else if (sel.includes('\n')) {
+    toast('Bold works within one line at a time. Select text on a single line.', 'warn');
+  } else if (!sel) {
+    replaceRange(el, s0, s1, '**bold text**', s0 + 2, s0 + 11);
+  } else {
+    replaceRange(el, s0, s1, '**' + sel + '**', s0 + 2, s1 + 2);
+  }
+}
+
+/** Shrink big photos before upload so emails stay light and the database stays small. */
+async function prepareImage(file) {
+  if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.type)) throw new Error('Choose a JPEG, PNG or GIF image.');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error("That file couldn't be read as an image.")); i.src = url; });
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const MAXW = 1400;
+    if (['image/png', 'image/jpeg', 'image/gif'].includes(file.type) && w <= MAXW && file.size <= 900 * 1024) {
+      return { blob: file, width: w, height: h };
+    }
+    const scale = Math.min(1, MAXW / w);
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    const ctx = c.getContext('2d');
+    const toBlob = (type, q) => new Promise((ok) => c.toBlob(ok, type, q));
+    let blob = null;
+    if (file.type === 'image/png' || file.type === 'image/gif') {
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      blob = await toBlob('image/png');
+    }
+    if (!blob || blob.size > 900 * 1024) {
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      blob = await toBlob('image/jpeg', 0.86);
+      if (blob.size > 1.4 * 1024 * 1024) blob = await toBlob('image/jpeg', 0.7);
+    }
+    return { blob, width: c.width, height: c.height };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+const IMG_DLG = { target: null, selected: null };
+
+function imageUses(id) {
+  return S.templates.filter((t) => [t.body, ...t.variations.map((v) => v.body)].some((b) => String(b || '').includes('{{image:' + id)));
+}
+
+function fmtSize(n) { return n > 1024 * 1024 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+function renderImageDialog() {
+  const sel = IMG_DLG.selected && imageMeta(IMG_DLG.selected);
+  $('#imgGrid').innerHTML = S.images.length
+    ? S.images.map((m) => `<button type="button" class="thumb" data-img="${esc(m.id)}" aria-pressed="${m.id === IMG_DLG.selected}" title="${esc(m.name)}">
+        <span class="tbox"><img src="${esc(imageUrl(m.id))}" alt="" loading="lazy"></span>
+        <span class="tname">${esc(m.name)}</span><span class="tmeta">${m.width}×${m.height} · ${fmtSize(m.size || 0)}</span></button>`).join('')
+    : '<p class="none" style="grid-column:1/-1;margin:0">No images yet. Upload one to get started.</p>';
+  $('#imgSel').hidden = !sel;
+  $('#imgInsert').disabled = !sel;
+  $('#imgDelete').hidden = !sel;
+  if (sel) {
+    $('#imgName').value = sel.name;
+    const opts = [[200, 'Small'], [400, 'Medium'], [600, 'Large']].filter(([w]) => w < sel.width);
+    opts.push([Math.min(sel.width, 1400), 'Actual size']);
+    const def = Math.min(sel.width, 600);
+    $('#imgWidth').innerHTML = opts.map(([w, l]) => `<option value="${w}"${w === def ? ' selected' : ''}>${l} (${w} px wide)</option>`).join('');
+  }
+}
+
+function openImageDialog(target) {
+  IMG_DLG.target = target;
+  IMG_DLG.selected = null;
+  $('#imgErr').hidden = true;
+  renderImageDialog();
+  $('#imgDlg').showModal();
+}
+
+async function uploadFiles(files) {
+  const err = $('#imgErr'); err.hidden = true;
+  for (const file of files) {
+    const status = $('#imgBusy'); status.hidden = false; status.textContent = 'Uploading ' + (file.name || 'image') + '…';
+    try {
+      const { blob, width, height } = await prepareImage(file);
+      const name = (file.name || 'Pasted image').replace(/\.[a-z0-9]+$/i, '').replace(/[|{}]/g, ' ').trim().slice(0, 80) || 'Image';
+      const saved = await Store.uploadImage(blob, { name, width, height });
+      S.images.unshift(saved);
+      IMG_DLG.selected = saved.id;
+    } catch (e) {
+      err.textContent = e.message; err.hidden = false;
+    } finally { status.hidden = true; }
+  }
+  renderImageDialog();
+}
+
+function insertImageToken() {
+  const m = imageMeta(IMG_DLG.selected); const el = IMG_DLG.target;
+  if (!m || !el || !document.contains(el)) { $('#imgDlg').close(); return; }
+  const name = $('#imgName').value.replace(/[|{}\n]/g, ' ').trim() || m.name;
+  const token = `{{image:${m.id}|${name}|${$('#imgWidth').value}}}`;
+  const v = el.value; const at = el.selectionStart ?? v.length; const end = el.selectionEnd ?? at;
+  // Put the image on a line of its own.
+  const before = at > 0 && v[at - 1] !== '\n' ? '\n' : '';
+  const after = v[end] !== '\n' ? '\n' : '';
+  $('#imgDlg').close();
+  const text = before + token + after;
+  replaceRange(el, at, end, text, at + text.length, at + text.length);
+}
+
+function bindImageDialog() {
+  const dlg = $('#imgDlg');
+  $('#imgUpload').addEventListener('click', () => $('#imgFile').click());
+  $('#imgFile').addEventListener('change', (e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) uploadFiles(f); });
+  $('#imgGrid').addEventListener('click', (e) => { const t = e.target.closest('[data-img]'); if (t) { IMG_DLG.selected = t.dataset.img; renderImageDialog(); } });
+  $('#imgGrid').addEventListener('dblclick', (e) => { if (e.target.closest('[data-img]')) insertImageToken(); });
+  $('#imgInsert').addEventListener('click', insertImageToken);
+  dlg.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); uploadFiles(files); }
+  });
+  const drop = $('#imgDrop');
+  ['dragenter', 'dragover'].forEach((ev) => dlg.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((ev) => dlg.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || e.target === dlg) drop.classList.remove('over'); }));
+  dlg.addEventListener('drop', (e) => { const f = [...(e.dataTransfer?.files || [])].filter((x) => x.type.startsWith('image/')); if (f.length) uploadFiles(f); });
+  $('#imgDelete').addEventListener('click', async () => {
+    const m = imageMeta(IMG_DLG.selected); if (!m) return;
+    const uses = imageUses(m.id);
+    dlg.close();
+    const ok = await ask('Delete image?', `Delete “${m.name}” from the image library?` + (uses.length ? ` It's used in ${uses.length} template${uses.length === 1 ? '' : 's'} (${uses.slice(0, 3).map((t) => t.name).join(', ')}${uses.length > 3 ? '…' : ''}), which will show it as missing. Emails already sent will lose the picture too.` : ''), 'Delete image');
+    if (ok) {
+      try { await Store.deleteImage(m.id); S.images = S.images.filter((x) => x.id !== m.id); IMG_DLG.selected = null; toast('Image deleted'); if (S.mode !== 'edit') updatePreview(); }
+      catch (e) { toast(e.message, 'err', 7000); }
+    }
+    renderImageDialog(); dlg.showModal();
+  });
+}
+
 function insertPlaceholder(name) {
   const el = bind.lastText && document.contains(bind.lastText) ? bind.lastText : $('#edBody');
   const token = '[' + name + ']';
@@ -1422,6 +1710,7 @@ async function boot() {
   S.templates = data.templates.map(normaliseTemplate);
   S.categories = Array.isArray(data.categories) ? data.categories : clone(window.SEED.categories);
   S.usage = { recent: [], counts: {}, last: {}, ...(data.usage || {}) };
+  try { S.images = await Store.listImages(); } catch { /* the library still works without images */ }
 
   if (!data.initialised && !S.templates.length) {
     try { await addSeed({ silent: true }); }

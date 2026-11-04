@@ -108,13 +108,13 @@ We do have [Alternative Option] available on those dates, or [Building Name] is 
 
 Thank you for your booking. I'm pleased to confirm the following:
 
-Booking number: [Booking Number]
-Accommodation: [Building Name]
-Arrival: [Arrival Date], from [Check-in]
-Departure: [Departure Date], by [Check-out]
-Total: [Price]
+**Booking number:** [Booking Number]
+**Accommodation:** [Building Name]
+**Arrival:** [Arrival Date], from [Check-in]
+**Departure:** [Departure Date], by [Check-out]
+**Total:** [Price]
 
-On arrival: [Arrival Instructions]
+**On arrival:** [Arrival Instructions]
 
 Please bring your own linen, pillows and towels unless you've arranged a linen hire. A copy of our site rules and a map of the park are attached.
 

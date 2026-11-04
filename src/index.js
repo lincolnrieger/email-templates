@@ -33,6 +33,14 @@ export default {
       return login(request, env, secret);
     }
 
+    // Images inside emails have to load for Outlook and for the customer,
+    // neither of whom has the staff password, so these are public. Each one
+    // sits at a long random address that can't be guessed or listed; the
+    // list of images and uploading/deleting them stay behind the password.
+    if (url.pathname.startsWith('/img/') && (request.method === 'GET' || request.method === 'HEAD')) {
+      return serveImage(env, url.pathname.slice(5));
+    }
+
     if (await validSession(request, secret)) {
       if (url.pathname.startsWith('/api/')) return api(request, env, url);
       const res = await env.ASSETS.fetch(request);
@@ -63,6 +71,11 @@ export default {
 //   DELETE /api/templates/:id        delete one template
 //   PUT    /api/meta/:id             save categories / usage (body: {data})
 //   POST   /api/import               bulk load (body: {replace, templates, categories})
+//   GET    /api/images               list uploaded images (no image data)
+//   POST   /api/images               upload one image (body: the file; X-Name, X-Width, X-Height headers)
+//   DELETE /api/images/:id           delete one image
+//
+// Images are kept in their own table and served publicly at /img/:id.
 //
 // `base` is the updatedAt the browser last saw. If the stored copy has moved
 // on since (edited in another tab or on another computer), the save is
@@ -77,6 +90,7 @@ async function api(request, env, url) {
       await env.DB.prepare(
         'CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (kind, id))'
       ).run();
+      await ensureImageTable(env);
       schemaReady = true;
     }
 
@@ -124,6 +138,35 @@ async function api(request, env, url) {
       return json({ ok: true });
     }
 
+    if (parts[0] === 'images') {
+      if (!parts[1] && method === 'GET') {
+        const { results } = await env.DB.prepare('SELECT id, name, type, width, height, size, created_at FROM images ORDER BY created_at DESC').all();
+        return json({ images: results });
+      }
+      if (!parts[1] && method === 'POST') {
+        const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+        if (!IMAGE_TYPES.includes(type)) return json({ error: 'Only JPEG, PNG and GIF images can be uploaded.' }, 400);
+        const buf = await request.arrayBuffer();
+        if (!buf.byteLength) return json({ error: 'The image is empty.' }, 400);
+        if (buf.byteLength > MAX_IMAGE_BYTES) return json({ error: 'That image is too large (the limit is 1.5 MB).' }, 413);
+        // A restore from a JSON backup keeps the image's original address, so
+        // templates that point at it keep working.
+        const wanted = request.headers.get('X-Id') || '';
+        const id = /^[a-z0-9]{20,40}$/.test(wanted) && !(await env.DB.prepare('SELECT 1 FROM images WHERE id = ?').bind(wanted).first()) ? wanted : randomId();
+        const name = decodeURIComponent(request.headers.get('X-Name') || 'Image').slice(0, 120);
+        const width = Math.max(0, parseInt(request.headers.get('X-Width'), 10) || 0);
+        const height = Math.max(0, parseInt(request.headers.get('X-Height'), 10) || 0);
+        const created = Date.now();
+        await env.DB.prepare('INSERT INTO images (id, name, type, width, height, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(id, name, type, width, height, buf.byteLength, buf, created).run();
+        return json({ image: { id, name, type, width, height, size: buf.byteLength, created_at: created } });
+      }
+      if (parts[1] && method === 'DELETE') {
+        await env.DB.prepare('DELETE FROM images WHERE id = ?').bind(parts[1]).run();
+        return json({ ok: true });
+      }
+    }
+
     if (parts[0] === 'import' && method === 'POST') {
       const body = await request.json();
       const templates = Array.isArray(body?.templates) ? body.templates : [];
@@ -150,6 +193,42 @@ async function api(request, env, url) {
   } catch (err) {
     return json({ error: 'The database could not complete that request.', detail: String(err?.message || err) }, 500);
   }
+}
+
+/* --------------------------------------------------------------- images */
+
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
+const MAX_IMAGE_BYTES = 1.5 * 1024 * 1024; // D1 holds up to 2 MB in one value
+let imageTableReady = false;
+
+async function ensureImageTable(env) {
+  if (imageTableReady) return;
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, width INTEGER, height INTEGER, size INTEGER, data BLOB NOT NULL, created_at INTEGER NOT NULL)'
+  ).run();
+  imageTableReady = true;
+}
+
+function randomId() {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return [...b].map((x) => x.toString(36).padStart(2, '0')).join('').slice(0, 24);
+}
+
+async function serveImage(env, id) {
+  const notFound = () => new Response('Image not found.', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  if (!env.DB || !/^[a-z0-9]{20,40}$/.test(id)) return notFound();
+  await ensureImageTable(env);
+  const row = await env.DB.prepare('SELECT type, data FROM images WHERE id = ?').bind(id).first();
+  if (!row) return notFound();
+  return new Response(new Uint8Array(row.data), {
+    headers: {
+      'Content-Type': IMAGE_TYPES.includes(row.type) ? row.type : 'application/octet-stream',
+      // An image never changes once uploaded (a new upload gets a new address).
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'",
+    },
+  });
 }
 
 function upsert(env, kind, id, data) {

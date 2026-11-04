@@ -45,6 +45,36 @@ If one building needs a genuinely different email, tick **Own email** on its
 row and write its own subject and body there. Templates that don't need
 building versions just leave the box unticked.
 
+## Bold text and images
+
+Above every email body there's a **B** button and an **Image** button.
+
+- **Bold:** select some text and click **B** (or press Ctrl+B). In the editor
+  it shows as `**like this**`; in the preview and in Outlook it's bold. Do the
+  same again to remove it.
+- **Images:** put the cursor where the picture should go and click
+  **Image**. Upload a picture (or drag one in, or paste one with Ctrl+V), give
+  it a description, pick a size (Small 200 px, Medium 400 px, Large 600 px or
+  actual size) and click **Insert image**. The email body shows a line like
+  `{{image:abc123…|Park map|400}}`; the preview shows the picture.
+
+Uploaded images go into a shared library, so the same map or logo can be used
+in any template. Big photos are shrunk automatically (to 1400 px wide) before
+they're saved. Deleting an image warns you if a template still uses it.
+
+When you copy an email, each image goes in as a link to the picture on this
+site, at the size you chose. Image addresses are public on purpose: Outlook
+and your customers don't have the staff password, so a password-protected
+picture would show up blank. Each address is a long random code that can't be
+guessed, and the list of images is still behind the password. Don't upload
+anything confidential as an image.
+
+Depending on the recipient's email settings, they may have to click
+"download pictures" before linked images appear. If a picture must always
+show, attach it in Outlook instead.
+
+Copying as **plain text** (Settings) leaves out bold and images.
+
 ## Placeholders
 
 Anything in square brackets becomes a fill-in field, so you can invent your
@@ -61,8 +91,8 @@ The sliders icon, top right:
 
 - **Your name** and **font when pasted into Outlook** (Aptos, Calibri, Arial
   or plain text). These are remembered on that computer only.
-- **Download JSON backup**: the whole library, including building versions.
-  It can be imported again.
+- **Download JSON backup**: the whole library, including building versions
+  and images. It can be imported again.
 - **Export CSV**: opens in Excel. One row per template; building versions are
   in the `variations` column as JSON.
 - **Import**: a JSON backup or a CSV in the export's format. Templates with
@@ -80,8 +110,8 @@ customers.
 
 ## Where things are saved
 
-Templates, categories, favourites and recently used are saved in a Cloudflare
-D1 database, so they're the same on every computer and survive closing the
+Templates, images, categories, favourites and recently used are saved in a
+Cloudflare D1 database, so they're the same on every computer and survive closing the
 browser. The top bar shows *All changes saved* when the database is
 connected. If two people (or two tabs) edit the same template, the second save
 is stopped with a warning rather than silently overwriting the first.
@@ -103,7 +133,8 @@ missing, the site stays locked.
 ## Files
 
 ```
-src/index.js        password check, plus the /api/ routes that read and save templates
+src/index.js        password check, the /api/ routes that read and save templates,
+                    and the public /img/ addresses for images in emails
 public/index.html   page layout and styles
 public/app.js       the app: search, editing, variations, copying, import/export
 public/seed.js      starter categories and example templates (loaded once, on first run)

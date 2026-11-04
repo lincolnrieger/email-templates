@@ -175,6 +175,24 @@ details.pre[open] summary{margin-bottom:8px}
 .mail-subj span:last-child{font-weight:600;min-width:0;overflow-wrap:anywhere}
 .mail{padding:14px 16px 18px;font-family:var(--mail);font-size:14.5px;line-height:1.45;color:#111;overflow-wrap:anywhere;max-height:calc(100vh - 260px);overflow:auto}
 .mail p{margin:0;min-height:1.45em}
+.mail img{vertical-align:bottom}
+.lbl-row{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-bottom:4px}
+.lbl-row .lbl{margin:0}
+.fmt{display:inline-flex;gap:4px;flex:none}
+.fbtn{height:24px;min-width:26px;padding:0 7px;border:1px solid var(--line);border-radius:2px;background:var(--surface);font-size:12px;color:var(--ink-2);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.fbtn:hover{background:var(--sunk);border-color:#CFCBC1}
+.fbtn b{font-size:13px}
+.fbtn svg.i{width:13px;height:13px}
+.img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;max-height:300px;overflow:auto;padding:2px}
+.thumb{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);padding:6px;cursor:pointer;text-align:left;display:grid;gap:3px;min-width:0}
+.thumb:hover{border-color:#CFCBC1;background:var(--panel)}
+.thumb[aria-pressed="true"]{border-color:var(--green);box-shadow:0 0 0 2px rgba(47,93,70,.2);background:var(--green-soft)}
+.tbox{height:84px;display:grid;place-items:center;background:repeating-conic-gradient(#F1F0EC 0 25%,#fff 0 50%) 0 0/14px 14px;border-radius:2px;overflow:hidden}
+.tbox img{max-width:100%;max-height:84px;display:block}
+.tname{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tmeta{font-size:11px;color:var(--muted)}
+.drop{border:1px dashed var(--line);border-radius:var(--r);padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px;color:var(--muted);background:var(--panel)}
+.drop.over{border-color:var(--green);background:var(--green-soft)}
 .ph-f{background:#EAF1EC;border-bottom:1px solid #9DB9A7}
 .ph-e{background:var(--amber-soft);border:1px dashed #D5B460;border-radius:2px;padding:0 2px;color:#5A4510}
 .unfilled{padding:8px 12px;border-top:1px solid var(--line-2);font-size:12px;color:#5A4510;background:#FDF8EA}
@@ -387,6 +405,27 @@ dialog::backdrop{background:rgba(25,30,28,.32)}
     </div>
   </div>
   <div class="dlg-f"><button class="btn" data-close>Done</button></div>
+</dialog>
+
+<!-- Image library -->
+<dialog id="imgDlg" style="width:min(680px,calc(100vw - 24px))">
+  <div class="dlg-h"><h3>Insert image</h3><button class="btn quiet icon" data-close aria-label="Close"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dlg-b">
+    <div class="drop" id="imgDrop">
+      <button class="btn" type="button" id="imgUpload">Upload image…</button>
+      <span>or drag an image here, or paste one with Ctrl+V. JPEG, PNG or GIF; large photos are resized.</span>
+      <input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+    </div>
+    <div class="help" id="imgBusy" hidden></div>
+    <div class="err" id="imgErr" hidden></div>
+    <div class="img-grid" id="imgGrid"></div>
+    <div class="grid2" id="imgSel" hidden>
+      <div class="field"><label class="lbl" for="imgName">Description <span class="opt">shown if the picture doesn't load</span></label><input class="input" id="imgName"></div>
+      <div class="field"><label class="lbl" for="imgWidth">Size in the email</label><select class="select" id="imgWidth"></select></div>
+    </div>
+    <p class="help" style="margin:0">Images are saved in the library and can be reused in any template. Each one has a private, unguessable web address so it shows up for customers.</p>
+  </div>
+  <div class="dlg-f"><button class="btn danger" type="button" id="imgDelete" style="margin-right:auto" hidden>Delete image</button><button class="btn" data-close>Cancel</button><button class="btn primary" type="button" id="imgInsert" disabled>Insert image</button></div>
 </dialog>
 
 <!-- Confirm -->
