@@ -72,6 +72,7 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .btn.lg{height:36px;padding:0 16px;font-size:13.5px}
 .btn.icon{width:32px;padding:0}
 .link{border:0;background:none;padding:0;color:var(--green);font-size:12.5px;font-weight:500;cursor:pointer;border-radius:2px}
+.link.danger{color:var(--red)}
 .link:hover{color:var(--green-dark);text-decoration:underline;text-underline-offset:2px}
 
 .input,.select,.textarea{width:100%;min-width:0;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);padding:0 10px;height:34px;font-size:13.5px;color:var(--ink);transition:border-color .12s,box-shadow .12s}
@@ -342,6 +343,31 @@ table.sh-t{min-width:900px}
 .sh-t .select:hover{border-color:var(--line)}
 .sh-t .select:focus{background-color:var(--surface);border-color:var(--green)}
 .sh-t .w-name{min-width:170px}.sh-t .w-kind{min-width:112px}.sh-t .w-code{width:96px}.sh-t .w-url{min-width:210px}.sh-t .w-map{min-width:170px}.sh-t .w-pic{width:96px}
+.bank-b{padding:14px 20px 20px;display:grid;gap:12px}
+.choice .num{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:4px}
+.choice[aria-pressed="true"] .num{color:var(--green-dark)}
+.bank-search{display:grid;gap:6px}
+.bank-search .input{height:34px;font-size:13.5px}
+.bank-res{display:grid;gap:2px;max-height:300px;overflow:auto}
+.bank-res .none{margin:2px 0;font-size:12.5px}
+.bank-hit{display:flex;justify-content:space-between;gap:12px;align-items:center;text-align:left;border:1px solid transparent;background:none;border-radius:var(--r-sm);padding:7px 10px;font-size:13px;color:var(--ink);cursor:pointer}
+.bank-hit:hover,.bank-hit.kb{background:var(--green-soft);border-color:var(--green-line)}
+.bank-hit b{font-family:var(--mono);font-weight:600;color:var(--green-dark)}
+.bank-hit .dept{font-size:11.5px;color:var(--muted);margin-left:6px}
+.bank-pick{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--green-line);background:var(--green-tint);border-radius:var(--r);font-size:13.5px}
+.bank-pick .bank-num{font-family:var(--mono);color:var(--green-dark);margin-left:auto}
+.bank-tools{max-width:320px}
+.sh-sec.dept{max-width:none;border-top:1px solid var(--line-2);padding-top:16px}
+.dept-h{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.dept-h .field{display:grid;gap:6px;min-width:220px}.dept-h .w-num{min-width:0;width:150px}
+.dept-h .lbl{margin:0}
+.dept-h .link{margin-left:auto;align-self:center}
+.sh-sec.dept table.sh-t{min-width:640px}
+.bank-add{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.bank-add details{flex:1;min-width:260px;font-size:13px}
+.bank-add summary{cursor:pointer;color:var(--green-dark);height:34px;display:flex;align-items:center}
+.bank-add details p{margin:0 0 8px;color:var(--muted);line-height:1.5}
+.bank-add textarea{width:100%;min-height:96px;font-family:var(--mono);font-size:12.5px;padding:8px;margin-bottom:8px}
 .phc{border:1px solid var(--green-line);background:var(--green-tint);color:var(--green-dark);border-radius:var(--r-sm);font:11.5px/18px var(--mono);padding:0 6px;cursor:pointer;white-space:nowrap}
 .phc:hover{background:var(--green-soft);border-color:var(--green)}
 .mapthumb{width:84px;height:56px;border:1px dashed var(--line-strong);border-radius:var(--r-sm);background:var(--panel);cursor:pointer;display:grid;place-items:center;padding:0;overflow:hidden}
@@ -571,6 +597,7 @@ table.sh-t{min-width:900px}
     <button type="button" role="tab" data-tab="links">Links</button>
     <button type="button" role="tab" data-tab="maps">Maps</button>
     <button type="button" role="tab" data-tab="details">Other details</button>
+    <button type="button" role="tab" data-tab="bank">Banking codes</button>
   </div>
   <div class="dlg-b" id="shBody"></div>
   <div class="dlg-f"><span class="help" style="margin:0 auto 0 0;align-self:center">Click a <span class="phc" style="cursor:default">[name]</span> to copy it for use in a template.</span><button class="btn" data-close>Done</button></div>

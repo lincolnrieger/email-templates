@@ -428,6 +428,10 @@ function renderAll() {
 //   [<Link name> Link]   e.g. [Disc Golf Link]
 //   [<Map name>]         e.g. [Entry Map] (the picture itself)
 //   [<Detail name>]      e.g. [Caretaker Phone]
+//   [Department]         ┐ banking codes: chosen on the email screen
+//   [Department Number]  │ (pick the department, then search its codes
+//   [Banking Code]       │ by name and the number fills itself in)
+//   [Banking Code Name]  ┘
 
 const PLACE_KINDS = ['Building', 'Chalet', 'Bell tent', 'Camping', 'Other'];
 const cleanName = (x) => String(x || '').replace(/[\[\]{}|\n]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -443,7 +447,38 @@ function normaliseShared(sh) {
     links: arr(sh.links).map((x) => ({ id: str(x.id) || uid('ln'), name: str(x.name), url: str(x.url) })),
     maps: arr(sh.maps).map((x) => ({ id: str(x.id) || uid('mp'), name: str(x.name), image: str(x.image), width: +x.width || 600 })),
     details: arr(sh.details).map((x) => ({ id: str(x.id) || uid('dt'), name: str(x.name), value: str(x.value) })),
+    departments: (Array.isArray(sh.departments) ? arr(sh.departments) : [{}, {}]).map((x) => ({
+      id: str(x.id) || uid('dp'), name: str(x.name), number: str(x.number),
+      codes: arr(x.codes).map((c) => ({ id: str(c.id) || uid('bc'), name: str(c.name), code: str(c.code), other: str(c.other) })),
+    })),
   };
+}
+
+/* ---- Banking codes */
+
+const BANK_PH = ['Department', 'Department Number', 'Banking Code', 'Banking Code Name'];
+const deptLabel = (d, i) => cleanName(d.name) || 'Department ' + (i + 1);
+function departments() { return S.shared.departments; }
+function deptById(id) { return departments().find((d) => d.id === id) || null; }
+function bankCodeById(id) {
+  for (const d of departments()) { const c = d.codes.find((x) => x.id === id); if (c) return { dept: d, code: c }; }
+  return null;
+}
+/** Codes matching a search: every word has to appear in the name, other names or number (partial words count). */
+function bankSearch(q, dept) {
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  const out = [];
+  for (const d of dept ? [dept] : departments()) {
+    for (const c of d.codes) {
+      if (!cleanName(c.name) && !c.code.trim()) continue;
+      const name = norm(c.name); const hay = name + ' ' + norm(c.other) + ' ' + norm(c.code);
+      if (!words.every((x) => hay.includes(x))) continue;
+      // Names that start with what was typed come first.
+      const score = !words.length ? 0 : name.startsWith(words[0]) ? 0 : name.split(/\s+/).some((x) => x.startsWith(words[0])) ? 1 : 2;
+      out.push({ dept: d, code: c, score });
+    }
+  }
+  return out.sort((a, b) => a.score - b.score || a.code.name.localeCompare(b.code.name));
 }
 
 function gateCodes() { return S.shared.gateCodes.map((c) => c.trim()).filter(Boolean); }
@@ -494,7 +529,7 @@ function sharedPlaceholderNames() {
   const sh = S.shared;
   const named = (list, suffix = '') => list.map((x) => cleanName(x.name)).filter(Boolean).map((n) => n + suffix);
   return [...new Set(['Gate Code', 'Fixed Gate Code', 'Lock Code', 'Building Link', 'Building Map',
-    ...named(sh.maps), ...named(sh.links, ' Link'), ...named(sh.places, ' Link'), ...named(sh.details)])];
+    ...named(sh.maps), ...named(sh.links, ' Link'), ...named(sh.places, ' Link'), ...named(sh.details), ...BANK_PH])];
 }
 
 /* ============================================================ Detail: use */
@@ -504,8 +539,10 @@ function sharedPlaceholderNames() {
 // in Outlook after pasting.
 
 function work(t) {
-  if (!S.work[t.id]) S.work[t.id] = { varId: '', values: {}, gate: pickGate() };
+  if (!S.work[t.id]) S.work[t.id] = { varId: '', values: {}, gate: pickGate(), dept: '', bank: '', bankQ: '', bankKb: 0 };
   const w = S.work[t.id];
+  if (w.dept && !deptById(w.dept)) w.dept = '';
+  if (w.bank && !bankCodeById(w.bank)) w.bank = '';
   if (w.varId && !t.variations.some((v) => v.id === w.varId)) w.varId = '';
   if (w.gate && !gateCodes().includes(w.gate)) w.gate = pickGate();
   if (!w.gate) w.gate = pickGate();
@@ -526,6 +563,16 @@ function autoValues(t, w) {
   if (v) {
     out['Building Name'] = v.building;
     for (const [k, x] of Object.entries(v.values)) if (x !== '') out[k] = x;
+  }
+  const dp = deptById(w.dept);
+  if (dp) {
+    if (cleanName(dp.name)) out['Department'] = dp.name.trim();
+    if (dp.number.trim()) out['Department Number'] = dp.number.trim();
+  }
+  const bc = w.bank && bankCodeById(w.bank);
+  if (bc) {
+    if (bc.code.code.trim()) out['Banking Code'] = bc.code.code.trim();
+    if (cleanName(bc.code.name)) out['Banking Code Name'] = bc.code.name.trim();
   }
   const me = prefs().name;
   if (me) out['Your Name'] = me;
@@ -708,9 +755,11 @@ function renderFill(t, w) {
   const { subject, body } = emailText(t, w);
   const fields = placeholdersIn(subject, body);
   const auto = autoValues(t, w);
-  const manual = fields.filter((k) => auto[k] == null);
-  const filled = fields.filter((k) => auto[k] != null);
+  const banking = fields.some((k) => BANK_PH.includes(k));
+  const manual = fields.filter((k) => auto[k] == null && !(banking && BANK_PH.includes(k)));
+  const filled = fields.filter((k) => auto[k] != null && !(banking && BANK_PH.includes(k)));
   area.innerHTML = `
+    ${banking ? bankPanel(w) : ''}
     <section class="panel">
       <div class="panel-h"><h4>Fill in</h4>${manual.length ? '<button class="link" type="button" data-act="clearvals">Clear</button>' : ''}</div>
       ${manual.length
@@ -722,6 +771,48 @@ function renderFill(t, w) {
       <div class="panel-h"><h4>Filled in for you</h4><button class="link" type="button" data-act="openshared">Codes &amp; links</button></div>
       <dl class="auto">${filled.map((k) => `<div><dt>${esc(k)}</dt><dd>${autoDisplay(auto[k])}${k === 'Gate Code' && gateCodes().length > 1 ? ' <button class="link" type="button" data-act="newgate">Use a different code</button>' : ''}</dd></div>`).join('')}</dl>
     </section>` : ''}`;
+}
+
+/** Choose the department, then search its codes by name. */
+function bankPanel(w) {
+  const ds = departments();
+  const dp = deptById(w.dept);
+  const bc = w.bank && bankCodeById(w.bank);
+  const total = (dp ? [dp] : ds).reduce((n, d) => n + d.codes.length, 0);
+  return `<section class="panel bank">
+    <div class="panel-h"><h4>Banking code</h4><button class="link" type="button" data-act="openbank">Codes &amp; links</button></div>
+    <div class="bank-b">
+      ${ds.length ? `<div class="choices">${ds.map((d, i) => `<button type="button" class="choice" data-dept="${esc(d.id)}" aria-pressed="${d.id === w.dept}">${esc(deptLabel(d, i))}${d.number.trim() ? ` <span class="num">${esc(d.number.trim())}</span>` : ''}</button>`).join('')}</div>` : '<p class="none">No departments yet. Add them under Codes &amp; links → Banking codes.</p>'}
+      ${bc ? `<div class="bank-pick"><span class="bank-name">${esc(bc.code.name || 'Unnamed code')}</span><b class="bank-num">${esc(bc.code.code || 'no number')}</b><button class="link" type="button" data-act="bankchange">Change</button></div>`
+        : `<div class="bank-search">
+            <input class="input" id="bankQ" data-banksearch value="${esc(w.bankQ)}" placeholder="${dp ? `Search ${esc(deptLabel(dp, ds.indexOf(dp)))} codes, e.g. equ` : 'Search codes by name, e.g. equ'}" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="bankRes">
+            <div class="bank-res" id="bankRes" role="listbox">${bankResults(w, dp, total)}</div>
+          </div>`}
+    </div>
+  </section>`;
+}
+
+function bankResults(w, dp, total) {
+  if (!w.bankQ.trim()) return total ? `<p class="none">Type part of a name to search ${total} code${total === 1 ? '' : 's'}.</p>` : '<p class="none">No codes yet. Add them under Codes &amp; links → Banking codes.</p>';
+  const hits = bankSearch(w.bankQ, dp);
+  if (!hits.length) return `<p class="none">No code matches “${esc(w.bankQ.trim())}”${dp ? ' in this department' : ''}.</p>`;
+  const max = 8; w.bankKb = Math.min(w.bankKb, Math.min(hits.length, max) - 1);
+  const ds = departments();
+  return hits.slice(0, max).map((h, i) => `<button type="button" class="bank-hit${i === w.bankKb ? ' kb' : ''}" role="option" data-bankcode="${esc(h.code.id)}"><span>${esc(h.code.name || 'Unnamed code')}${dp ? '' : ` <span class="dept">${esc(deptLabel(h.dept, ds.indexOf(h.dept)))}</span>`}</span><b>${esc(h.code.code)}</b></button>`).join('')
+    + (hits.length > max ? `<p class="none">${hits.length - max} more. Keep typing to narrow it down.</p>` : '');
+}
+
+function refreshBankResults(t, w) {
+  const res = $('#bankRes'); if (!res) return;
+  const dp = deptById(w.dept);
+  res.innerHTML = bankResults(w, dp, (dp ? [dp] : departments()).reduce((n, d) => n + d.codes.length, 0));
+}
+
+function pickBankCode(t, w, id) {
+  const bc = bankCodeById(id); if (!bc) return;
+  w.bank = id; w.dept = bc.dept.id; w.bankQ = ''; w.bankKb = 0;
+  renderFill(t, w); updatePreview();
+  ($$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]'))?.focus();
 }
 
 function updatePreview() {
@@ -1397,6 +1488,20 @@ function bind() {
       ($$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]'))?.focus();
       return;
     }
+    const dpb = e.target.closest('[data-dept]');
+    if (dpb && S.mode !== 'edit') {
+      const t = byId(S.selectedId); if (!t) return;
+      const w = work(t);
+      w.dept = dpb.dataset.dept;
+      const bc = w.bank && bankCodeById(w.bank);
+      if (bc && bc.dept.id !== w.dept) w.bank = '';
+      w.bankKb = 0;
+      renderFill(t, w); updatePreview();
+      $('#bankQ')?.focus();
+      return;
+    }
+    const bkb = e.target.closest('[data-bankcode]');
+    if (bkb && S.mode !== 'edit') { const t = byId(S.selectedId); if (t) pickBankCode(t, work(t), bkb.dataset.bankcode); return; }
     const b = e.target.closest('[data-act],[data-ins]');
     if (!b) return;
     if (b.dataset.ins) { insertPlaceholder(b.dataset.ins); return; }
@@ -1412,6 +1517,8 @@ function bind() {
       case 'clearvals': if (t) { work(t).values = {}; renderFill(t, work(t)); updatePreview(); $('#fillArea [data-ph]')?.focus(); } break;
       case 'newgate': if (t) { const w = work(t); w.gate = pickGate(w.gate); renderFill(t, w); updatePreview(); } break;
       case 'openshared': openShared(); break;
+      case 'openbank': openShared('bank'); break;
+      case 'bankchange': if (t) { const w = work(t); w.bank = ''; renderFill(t, w); updatePreview(); $('#bankQ')?.focus(); } break;
       case 'addkind':
         for (const pl of S.shared.places.filter((x) => x.kind === b.dataset.kind && cleanName(x.name))) {
           if (!S.draft.variations.some((v) => norm(v.building) === norm(pl.name))) S.draft.variations.push({ id: uid('v'), building: pl.name, values: {}, ownEmail: false, subject: '', body: '' });
@@ -1456,6 +1563,7 @@ function bind() {
     const t = byId(S.selectedId); if (!t) return;
     const w = work(t);
     const el = e.target;
+    if (el.dataset.banksearch != null) { w.bankQ = el.value; w.bankKb = 0; refreshBankResults(t, w); return; }
     if (el.dataset.ph) {
       w.values[el.dataset.ph] = el.value;
       // Your name is remembered on this computer, so it fills itself in next time.
@@ -1473,6 +1581,25 @@ function bind() {
   });
 
   // In an email body: Ctrl+B makes the selection bold, Ctrl+K makes it a link (as in Outlook).
+  // Banking code search: ↑ ↓ to move, Enter to pick, Esc to clear.
+  $('#detail').addEventListener('keydown', (e) => {
+    if (e.target.dataset?.banksearch == null) return;
+    const t = byId(S.selectedId); if (!t) return;
+    const w = work(t);
+    const hits = $$('#bankRes [data-bankcode]');
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && hits.length) {
+      e.preventDefault();
+      w.bankKb = Math.max(0, Math.min(hits.length - 1, w.bankKb + (e.key === 'ArrowDown' ? 1 : -1)));
+      hits.forEach((h, i) => h.classList.toggle('kb', i === w.bankKb));
+    } else if (e.key === 'Enter' && hits.length) {
+      e.preventDefault();
+      pickBankCode(t, w, hits[Math.min(w.bankKb, hits.length - 1)].dataset.bankcode);
+    } else if (e.key === 'Escape' && w.bankQ) {
+      e.preventDefault(); e.stopPropagation();
+      e.target.value = ''; w.bankQ = ''; w.bankKb = 0; refreshBankResults(t, w);
+    }
+  });
+
   $('#detail').addEventListener('keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.target.tagName !== 'TEXTAREA' || !isBodyBox(e.target)) return;
     const k = e.key.toLowerCase();
@@ -1546,6 +1673,25 @@ function bind() {
 
 let shTab = 'gate';
 let shTimer = null;
+let shBankQ = '';
+
+/** "Name<TAB>Code", "Name, Code" or "Name - Code" per line (code last if it looks like a number). */
+function parseCodeList(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let parts = line.includes('\t') ? line.split('\t') : line.includes(',') ? line.split(',') : line.split(/\s+[-–]\s+/);
+    parts = parts.map((x) => x.trim());
+    if (parts.length === 1) { const m = /^(.*?)\s+([\d][\w.\/-]*)$/.exec(parts[0]); if (m) parts = [m[1], m[2]]; }
+    let [name = '', code = '', ...rest] = parts;
+    // Accept the columns either way round: "4120, Equipment hire".
+    if (/^\d[\w.\/-]*$/.test(name) && !/^\d[\w.\/-]*$/.test(code)) [name, code] = [code, name];
+    if (name || code) out.push({ id: uid('bc'), name, code, other: rest.filter(Boolean).join(', ') });
+  }
+  return out;
+}
+
+function sharedPathGet(path) { return path.split('.').reduce((o, k) => o?.[k], S.shared); }
 
 function openShared(tab) {
   if (tab) shTab = tab;
@@ -1621,6 +1767,39 @@ function renderShared() {
         <td class="c">${del('maps', i)}</td></tr>`;
       }).join(''), 'No maps yet.') +
       `<div><button class="btn" type="button" data-shadd="maps">Add map</button></div>`;
+  } else if (shTab === 'bank') {
+    const ds = sh.departments;
+    const q = norm(shBankQ).split(/\s+/).filter(Boolean);
+    const shows = (c) => !q.length || q.every((x) => (norm(c.name) + ' ' + norm(c.other) + ' ' + norm(c.code)).includes(x));
+    h = `<p class="sh-intro">Choose the department on the email screen and its number goes into ${phCode('Department Number')} (and its name into ${phCode('Department')}). Then search its codes by name, e.g. <i>equ</i>, and the code fills in ${phCode('Banking Code')} (and its name ${phCode('Banking Code Name')}). <b>Other names</b> are extra words that find the code too, e.g. <i>gear, kit</i>.</p>
+      <div class="bank-tools"><input class="input" id="shBankQ" value="${esc(shBankQ)}" placeholder="Find a code in this list" autocomplete="off" spellcheck="false"></div>` +
+      ds.map((d, di) => {
+        const rows = d.codes.map((c, ci) => shows(c) ? `<tr>
+          <td class="w-name">${inp(`departments.${di}.codes.${ci}.name`, c.name, 'e.g. Equipment hire')}</td>
+          <td class="w-code">${inp(`departments.${di}.codes.${ci}.code`, c.code, 'e.g. 4120')}</td>
+          <td class="w-url">${inp(`departments.${di}.codes.${ci}.other`, c.other, 'other words to search by')}</td>
+          <td class="c">${del(`departments.${di}.codes`, ci)}</td></tr>` : '').join('');
+        const hidden = d.codes.filter((c) => !shows(c)).length;
+        return `<div class="sh-sec dept">
+          <div class="dept-h">
+            <label class="field"><span class="lbl">Department name</span>${inp(`departments.${di}.name`, d.name, 'e.g. Accommodation')}</label>
+            <label class="field w-num"><span class="lbl">Department number</span>${inp(`departments.${di}.number`, d.number, 'e.g. 200')}</label>
+            ${ds.length > 1 ? `<button type="button" class="link danger" data-shdel="departments" data-i="${di}">Remove department</button>` : ''}
+          </div>
+          ${table(['Code name', 'Code', 'Other names'], rows, q.length ? `No codes match “${esc(shBankQ.trim())}”.` : 'No codes yet.')}
+          ${hidden && q.length ? `<p class="none">${hidden} other code${hidden === 1 ? '' : 's'} hidden by the search.</p>` : ''}
+          <div class="bank-add">
+            <button class="btn" type="button" data-shaddcode="${di}">Add code</button>
+            <details><summary>Paste a list</summary>
+              <p>One code per line: the name, then the code, separated by a tab (copy two columns from Excel), a comma or a dash. A third column becomes its other names.</p>
+              <textarea class="input" data-bankpaste="${di}" rows="5" placeholder="Equipment hire	4120
+Catering, 4130"></textarea>
+              <div><button class="btn" type="button" data-bankpasteadd="${di}">Add these codes</button></div>
+            </details>
+          </div>
+        </div>`;
+      }).join('') +
+      `<div><button class="btn" type="button" data-shadd="departments">Add department</button></div>`;
   } else {
     h = `<p class="sh-intro">Anything else that appears in several templates, such as a phone number. Change it here and every email picks it up.</p>` +
       table(['Name', 'Value', 'Use in templates'], sh.details.map((x, i) => `<tr>
@@ -1646,28 +1825,64 @@ function bindShared() {
   $('#sharedBtn').addEventListener('click', () => openShared());
   $('#setShared').addEventListener('click', () => { $('#setDlg').close(); openShared(); });
   $('#shTabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) { shTab = b.dataset.tab; renderShared(); } });
-  dlg.addEventListener('input', (e) => { const el = e.target; if (el.dataset.sh && el.tagName === 'INPUT') { setSharedPath(el.dataset.sh, el.value); saveShared(); } });
+  dlg.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.id === 'shBankQ') {
+      shBankQ = el.value; const at = el.selectionStart;
+      renderShared(); const f = $('#shBankQ'); f.focus(); f.setSelectionRange(at, at);
+      return;
+    }
+    if (el.dataset.sh && el.tagName === 'INPUT') { setSharedPath(el.dataset.sh, el.value); saveShared(); }
+  });
   dlg.addEventListener('change', (e) => {
     const el = e.target; if (!el.dataset.sh) return;
     if (el.tagName === 'SELECT') { setSharedPath(el.dataset.sh, el.value); saveShared(); }
-    if (el.tagName === 'SELECT' || /\.name$/.test(el.dataset.sh)) renderShared(); // refresh the [placeholder] shown next to it
+    if (el.tagName === 'SELECT' || (/\.name$/.test(el.dataset.sh) && !el.dataset.sh.startsWith('departments.'))) renderShared(); // refresh the [placeholder] shown next to it
   });
   dlg.addEventListener('click', async (e) => {
     const add = e.target.closest('[data-shadd]');
     if (add) {
       const list = add.dataset.shadd;
-      const blank = { gateCodes: '', places: { id: uid('pl'), name: '', kind: 'Building', code: '', link: '', map: '' }, links: { id: uid('ln'), name: '', url: '' }, maps: { id: uid('mp'), name: '', image: '', width: 600 }, details: { id: uid('dt'), name: '', value: '' } }[list];
+      const blank = { departments: { id: uid('dp'), name: '', number: '', codes: [] }, gateCodes: '', places: { id: uid('pl'), name: '', kind: 'Building', code: '', link: '', map: '' }, links: { id: uid('ln'), name: '', url: '' }, maps: { id: uid('mp'), name: '', image: '', width: 600 }, details: { id: uid('dt'), name: '', value: '' } }[list];
       S.shared[list].push(blank);
       renderShared();
+      if (list === 'departments') { $(`#shBody [data-sh="departments.${S.shared.departments.length - 1}.name"]`)?.focus(); saveShared(); return; }
       $$(`#shBody [data-sh^="${list}."]`).filter((i) => i.tagName === 'INPUT').at(list === 'gateCodes' ? -1 : -(list === 'places' ? 3 : 2))?.focus();
+      return;
+    }
+    const addc = e.target.closest('[data-shaddcode]');
+    if (addc) {
+      const di = +addc.dataset.shaddcode; const d = S.shared.departments[di];
+      d.codes.push({ id: uid('bc'), name: '', code: '', other: '' });
+      shBankQ = '';
+      renderShared();
+      $(`#shBody [data-sh="departments.${di}.codes.${d.codes.length - 1}.name"]`)?.focus();
+      return;
+    }
+    const pa = e.target.closest('[data-bankpasteadd]');
+    if (pa) {
+      const di = +pa.dataset.bankpasteadd; const d = S.shared.departments[di];
+      const list = parseCodeList($(`#shBody [data-bankpaste="${di}"]`).value);
+      if (!list.length) { toast('Nothing to add. Paste one code per line first.', 'warn'); return; }
+      // A name already in this department gets its code updated instead of a second copy.
+      let added = 0, updated = 0;
+      for (const c of list) {
+        const same = c.name && d.codes.find((x) => norm(x.name).trim() === norm(c.name).trim());
+        if (same) { same.code = c.code || same.code; if (c.other) same.other = c.other; updated++; } else { d.codes.push(c); added++; }
+      }
+      shBankQ = '';
+      renderShared(); saveShared();
+      toast(`${added} code${added === 1 ? '' : 's'} added${updated ? `, ${updated} updated` : ''} in ${deptLabel(d, di)}.`);
       return;
     }
     const delb = e.target.closest('[data-shdel]');
     if (delb) {
-      const list = delb.dataset.shdel; const i = +delb.dataset.i; const item = S.shared[list][i];
-      const label = typeof item === 'string' ? item : item.name;
-      if (label && !(await ask('Remove?', `Remove “${label}” from Codes & links? Templates that use it will show it as a blank to fill in.`, 'Remove'))) return;
-      S.shared[list].splice(i, 1);
+      const list = delb.dataset.shdel; const i = +delb.dataset.i; const arr = sharedPathGet(list); const item = arr[i];
+      const label = typeof item === 'string' ? item : item.name || (list === 'departments' && item.codes.length ? deptLabel(item, i) : '');
+      if (label && !(await ask('Remove?', list === 'departments'
+        ? `Remove the “${label}” department and its ${item.codes.length} code${item.codes.length === 1 ? '' : 's'}?`
+        : `Remove “${label}” from Codes & links? Templates that use it will show it as a blank to fill in.`, 'Remove'))) return;
+      arr.splice(i, 1);
       if (list === 'maps') for (const pl of S.shared.places) if (pl.map === item.id) pl.map = '';
       renderShared(); saveShared();
       return;
