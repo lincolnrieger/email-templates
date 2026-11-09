@@ -30,8 +30,17 @@ doesn't edit the email text. To change a template for everyone, use
 Opening a template starts a fresh email: blanks are cleared and a new gate
 code is picked. What you type in **Your Name** is remembered on that computer.
 
-Copying a template adds it to **Recently used**. Star a template to add it to
-**Favourites**.
+Star a template to add it to **Favourites**. **Sort: Recently used** (and
+*Most used*) in the list puts the templates you copy most often first.
+
+## Accounts payable
+
+**Accounts payable** in the left-hand list shows every banking code in one
+table, to look up a code without opening a template. Type in its search box
+(e.g. `equ`, `bunnings` or `2638`); every word has to appear in the code, its
+name, type or other names. The buttons beside it show one department or all
+of them. Click a code to copy it. The table is view-only: codes are added and
+changed in **Codes & links → Banking codes**.
 
 ## Codes & links
 
