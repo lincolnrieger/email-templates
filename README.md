@@ -49,6 +49,7 @@ copy it for pasting into a template.
 | Links | Activity and other pages. | e.g. `[Disc Golf Link]` |
 | Maps | Map pictures and their size. A place with no map of its own, or a map still waiting for its picture, shows *Entry Map* (or the first map), so you can set up a map slot first and upload the picture later. | e.g. `[Entry Map]` |
 | Other details | Anything else shared, e.g. the caretaker's phone. | e.g. `[Caretaker Phone]` |
+| Banking codes | The departments (name and number) and, under each, its banking codes (name, code and other names to search by). See *Banking codes* below. | `[Department]` `[Department Number]` `[Banking Code]` `[Banking Code Name]` |
 
 To link words to one of these, select the words in the template editor, click
 **Link** and choose it under *Saved link*. That writes
@@ -58,6 +59,27 @@ in Codes & links.
 A place's name must match the building's name in the template exactly (for
 example *Bell Tent St George 2*). If something in Codes & links is left blank,
 emails that use it show it as a blank to fill in instead.
+
+## Banking codes
+
+Put any of `[Department]`, `[Department Number]`, `[Banking Code]` or
+`[Banking Code Name]` in a template and the email screen shows a **Banking
+code** box:
+
+1. Click the department (the buttons show its number).
+2. Type part of a code's name, e.g. `equ`, and pick from the list (`↑` `↓`
+   and `Enter` work). The code number fills in. *Change* picks another.
+
+You can also search before choosing a department: the list then covers every
+department, and picking a code chooses its department too.
+
+Set them up under **Codes & links → Banking codes**. Each department has a
+name, a number and its list of codes. A code's *Other names* are extra words
+that find it as well (e.g. `gear, kit` for *Equipment hire*). To add lots at
+once, open **Paste a list** and paste two columns from Excel (name, then
+code; a third column becomes other names), or type `Name, Code` one per line.
+A name that's already in the department gets its code updated rather than
+added twice. The box at the top finds a code in the list.
 
 ## Building variations
 
