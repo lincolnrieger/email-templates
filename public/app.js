@@ -539,8 +539,9 @@ function sharedPlaceholderNames() {
 // in Outlook after pasting.
 
 function work(t) {
-  if (!S.work[t.id]) S.work[t.id] = { varId: '', values: {}, gate: pickGate(), dept: '', bank: '', bankQ: '', bankKb: 0 };
-  const w = S.work[t.id];
+  // Fill in anything missing, whoever created the working copy.
+  const w = S.work[t.id] || (S.work[t.id] = {});
+  for (const [k, v] of Object.entries({ varId: '', values: {}, gate: '', dept: '', bank: '', bankQ: '', bankKb: 0 })) if (w[k] == null) w[k] = v;
   if (w.dept && !deptById(w.dept)) w.dept = '';
   if (w.bank && !bankCodeById(w.bank)) w.bank = '';
   if (w.varId && !t.variations.some((v) => v.id === w.varId)) w.varId = '';
