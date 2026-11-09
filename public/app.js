@@ -449,7 +449,7 @@ function normaliseShared(sh) {
     details: arr(sh.details).map((x) => ({ id: str(x.id) || uid('dt'), name: str(x.name), value: str(x.value) })),
     departments: (Array.isArray(sh.departments) ? arr(sh.departments) : [{}, {}]).map((x) => ({
       id: str(x.id) || uid('dp'), name: str(x.name), number: str(x.number),
-      codes: arr(x.codes).map((c) => ({ id: str(c.id) || uid('bc'), name: str(c.name), code: str(c.code), other: str(c.other) })),
+      codes: arr(x.codes).map((c) => ({ id: str(c.id) || uid('bc'), name: str(c.name), code: str(c.code), type: str(c.type), other: str(c.other) })),
     })),
   };
 }
@@ -471,7 +471,7 @@ function bankSearch(q, dept) {
   for (const d of dept ? [dept] : departments()) {
     for (const c of d.codes) {
       if (!cleanName(c.name) && !c.code.trim()) continue;
-      const name = norm(c.name); const hay = name + ' ' + norm(c.other) + ' ' + norm(c.code);
+      const name = norm(c.name); const hay = name + ' ' + norm(c.other) + ' ' + norm(c.code) + ' ' + norm(c.type);
       if (!words.every((x) => hay.includes(x))) continue;
       // Names that start with what was typed come first.
       const score = !words.length ? 0 : name.startsWith(words[0]) ? 0 : name.split(/\s+/).some((x) => x.startsWith(words[0])) ? 1 : 2;
@@ -798,7 +798,7 @@ function bankResults(w, dp, total) {
   if (!hits.length) return `<p class="none">No code matches “${esc(w.bankQ.trim())}”${dp ? ' in this department' : ''}.</p>`;
   const max = 8; w.bankKb = Math.min(w.bankKb, Math.min(hits.length, max) - 1);
   const ds = departments();
-  return hits.slice(0, max).map((h, i) => `<button type="button" class="bank-hit${i === w.bankKb ? ' kb' : ''}" role="option" data-bankcode="${esc(h.code.id)}"><span>${esc(h.code.name || 'Unnamed code')}${dp ? '' : ` <span class="dept">${esc(deptLabel(h.dept, ds.indexOf(h.dept)))}</span>`}</span><b>${esc(h.code.code)}</b></button>`).join('')
+  return hits.slice(0, max).map((h, i) => `<button type="button" class="bank-hit${i === w.bankKb ? ' kb' : ''}" role="option" data-bankcode="${esc(h.code.id)}"><span>${esc(h.code.name || 'Unnamed code')}${h.code.type.trim() ? ` <span class="dept">${esc(h.code.type.trim())}</span>` : ''}${dp ? '' : ` <span class="dept">${esc(deptLabel(h.dept, ds.indexOf(h.dept)))}</span>`}</span><b>${esc(h.code.code)}</b></button>`).join('')
     + (hits.length > max ? `<p class="none">${hits.length - max} more. Keep typing to narrow it down.</p>` : '');
 }
 
@@ -879,7 +879,7 @@ async function doCopy(what) {
   const { values } = resolvedValues(t, w);
   if (t.variations.length && !w.varId) {
     toast(`Choose the ${choiceKind(t)} first.`, 'warn');
-    $('.choice')?.focus();
+    $('.choice[data-var]')?.focus();
     return;
   }
   const subject = plainText(fill(wt.subject, values));
@@ -1435,7 +1435,7 @@ function bind() {
       e.preventDefault();
       selectTemplate(r.t.id, r.variationId).then(() => {
         // Jump straight to the first thing to fill in.
-        const first = $('.choice[aria-pressed="false"]') && !$('.choice[aria-pressed="true"]') ? $('.choice') : $$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]');
+        const first = $('.choice[data-var][aria-pressed="false"]') && !$('.choice[data-var][aria-pressed="true"]') ? $('.choice[data-var]') : $$('#fillArea [data-ph]').find((i) => !i.value) || $('[data-act="copy"]');
         first?.focus();
       });
     } else if (e.key === 'Escape') {
@@ -1480,7 +1480,7 @@ function bind() {
       else openImageDialog(ta);
       return;
     }
-    const ch = e.target.closest('.choice');
+    const ch = e.target.closest('.choice[data-var]');
     if (ch && S.mode !== 'edit') {
       const t = byId(S.selectedId); if (!t) return;
       work(t).varId = ch.dataset.var;
@@ -1686,9 +1686,133 @@ function parseCodeList(text) {
     let [name = '', code = '', ...rest] = parts;
     // Accept the columns either way round: "4120, Equipment hire".
     if (/^\d[\w.\/-]*$/.test(name) && !/^\d[\w.\/-]*$/.test(code)) [name, code] = [code, name];
-    if (name || code) out.push({ id: uid('bc'), name, code, other: rest.filter(Boolean).join(', ') });
+    if (name || code) out.push({ id: uid('bc'), name, code, type: '', other: rest.filter(Boolean).join(', ') });
   }
   return out;
+}
+
+/* ---- Uploading banking codes from a spreadsheet */
+
+/** The files inside a .zip (an .xlsx is one), read on demand. */
+async function readZip(buf) {
+  const dv = new DataView(buf); const u8 = new Uint8Array(buf); const td = new TextDecoder();
+  let e = buf.byteLength - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('This file is not a valid Excel (.xlsx) file.');
+  const files = {};
+  for (let i = 0, n = dv.getUint16(e + 10, true), p = dv.getUint32(e + 16, true); i < n; i++) {
+    const nl = dv.getUint16(p + 28, true);
+    files[td.decode(u8.subarray(p + 46, p + 46 + nl))] = { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), off: dv.getUint32(p + 42, true) };
+    p += 46 + nl + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  return async (name) => {
+    const f = files[name]; if (!f) return null;
+    const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true);
+    const data = u8.slice(start, start + f.size);
+    if (f.method === 0) return td.decode(data);
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  };
+}
+
+/** The first sheet of an .xlsx as rows of { v: text, strike: crossed out? }. */
+async function readXlsx(buf) {
+  const get = await readZip(buf);
+  const xml = (s) => (s ? new DOMParser().parseFromString(s, 'application/xml') : null);
+  const tags = (el, t) => (el ? [...el.getElementsByTagName(t)] : []);
+  const struckOn = (el) => { const x = el && el.getElementsByTagName('strike')[0]; return !!x && !/^(0|false)$/i.test(x.getAttribute('val') || ''); };
+  const wb = xml(await get('xl/workbook.xml'));
+  if (!wb) throw new Error('This file is not a valid Excel (.xlsx) file.');
+  const rid = tags(wb, 'sheet')[0]?.getAttribute('r:id');
+  const rel = tags(xml(await get('xl/_rels/workbook.xml.rels')), 'Relationship').find((r) => r.getAttribute('Id') === rid);
+  const target = rel ? rel.getAttribute('Target').replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/') : 'xl/worksheets/sheet1.xml';
+  // Crossed-out text: a cell's font, or every run of a shared string.
+  const st = xml(await get('xl/styles.xml'));
+  const fonts = tags(tags(st, 'fonts')[0], 'font').map(struckOn);
+  const xfStrike = tags(tags(st, 'cellXfs')[0], 'xf').map((x) => !!fonts[+x.getAttribute('fontId') || 0]);
+  const text = (si) => tags(si, 't').filter((t) => t.parentNode.nodeName !== 'rPh').map((t) => t.textContent).join('');
+  const shared = tags(xml(await get('xl/sharedStrings.xml')), 'si').map((si) => {
+    const runs = tags(si, 'r');
+    return { v: text(si), strike: runs.length > 0 && runs.every((r) => !r.textContent.trim() || struckOn(r.getElementsByTagName('rPr')[0])) };
+  });
+  const col = (ref) => { let n = 0; for (const ch of String(ref).replace(/\d+$/, '')) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+  return tags(xml(await get(target)), 'row').map((row) => {
+    const out = [];
+    for (const c of tags(row, 'c')) {
+      const t = c.getAttribute('t'); const v = c.getElementsByTagName('v')[0]?.textContent ?? '';
+      const ss = t === 's' ? shared[+v] : null;
+      const val = ss ? ss.v : t === 'inlineStr' ? text(c.getElementsByTagName('is')[0]) : v;
+      out[col(c.getAttribute('r'))] = { v: String(val).trim(), strike: xfStrike[+c.getAttribute('s') || 0] || !!ss?.strike };
+    }
+    return Array.from(out, (x) => x || { v: '', strike: false });
+  });
+}
+
+/** Departments and their codes from spreadsheet rows (headers in the first row that has a Code column). */
+function bankRowsToDepartments(rows) {
+  const hi = rows.findIndex((r) => r.some((c) => /^(account )?code$/i.test(c.v.trim())));
+  if (hi < 0) throw new Error('No “Code” column found. The first row should be the headings: Department, Department Number, Code, Name, Type, Other names.');
+  const heads = rows[hi].map((c) => norm(c.v).replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim());
+  const find = (re) => heads.findIndex((h) => re.test(h));
+  const ix = {
+    num: find(/^(department|dept) (number|no|num)$/),
+    dept: find(/^(department|dept)( name)?$/),
+    code: find(/^(account )?code$/),
+    name: find(/^(code )?(name|description)$/),
+    type: find(/^type$/),
+    other: find(/other names|search|supplier|keyword/),
+  };
+  if (ix.name < 0) throw new Error('No “Name” column found.');
+  if (ix.dept < 0 && ix.num < 0) throw new Error('No “Department” column found.');
+  const depts = new Map(); let struck = 0;
+  for (const r of rows.slice(hi + 1)) {
+    const cell = (i) => (i >= 0 && r[i] ? r[i] : { v: '', strike: false });
+    const code = cell(ix.code).v; const name = cell(ix.name).v.replace(/\s+/g, ' ');
+    if (!code && !name) continue;
+    if (cell(ix.code).strike || cell(ix.name).strike) { struck++; continue; }
+    const dn = cell(ix.dept).v; const dnum = cell(ix.num).v;
+    if (!dn && !dnum) continue;
+    const key = dnum || norm(dn);
+    if (!depts.has(key)) depts.set(key, { name: dn, number: dnum, codes: [] });
+    const d = depts.get(key);
+    if (!d.name && dn) d.name = dn;
+    const same = d.codes.find((x) => x.code === code && norm(x.name) === norm(name));
+    const other = cell(ix.other).v; const type = cell(ix.type).v;
+    if (same) { if (other) same.other = [same.other, other].filter(Boolean).join(', '); continue; }
+    d.codes.push({ id: uid('bc'), name, code, type, other });
+  }
+  return { depts: [...depts.values()], struck };
+}
+
+async function uploadBankFile(file) {
+  let rows;
+  try {
+    rows = /\.csv$/i.test(file.name) || file.type === 'text/csv'
+      ? parseCsv(await file.text()).map((r) => r.map((v) => ({ v: v.trim(), strike: false })))
+      : await readXlsx(await file.arrayBuffer());
+  } catch (e) { toast('Could not read that file. ' + (e.message || ''), 'err', 7000); return; }
+  let res;
+  try { res = bankRowsToDepartments(rows); } catch (e) { toast(e.message, 'err', 8000); return; }
+  const total = res.depts.reduce((n, d) => n + d.codes.length, 0);
+  if (!total) { toast('No codes found in that file.', 'warn'); return; }
+  const list = res.depts.map((d) => `${d.name || 'Department'}${d.number ? ' ' + d.number : ''}: ${d.codes.length} code${d.codes.length === 1 ? '' : 's'}`).join('; ');
+  if (!(await ask('Upload banking codes?', `Found ${total} codes (${list}).${res.struck ? ` ${res.struck} crossed-out row${res.struck === 1 ? ' is' : 's are'} left out.` : ''} The codes of these departments will be replaced with the ones in the file. Other departments stay as they are.`, 'Upload'))) return;
+  const ds = S.shared.departments;
+  const blank = (d) => !cleanName(d.name) && !d.number.trim() && !d.codes.length;
+  for (const nd of res.depts) {
+    const match = ds.find((d) => nd.number && d.number.trim() === nd.number) || ds.find((d) => nd.name && norm(d.name).trim() === norm(nd.name).trim()) || ds.find(blank);
+    if (match) { match.name = nd.name || match.name; match.number = nd.number || match.number; match.codes = nd.codes; }
+    else ds.push({ id: uid('dp'), ...nd });
+  }
+  shBankQ = '';
+  renderShared(); saveShared();
+  toast(`${total} banking codes uploaded.`);
+}
+
+function downloadBankCodes() {
+  const cell = (v) => { const x = String(v ?? ''); return /[",\n\r]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  const rows = [['Department', 'Department Number', 'Code', 'Name', 'Type', 'Other names'].join(',')];
+  for (const d of S.shared.departments) for (const c of d.codes) rows.push([d.name, d.number, c.code, c.name, c.type, c.other].map(cell).join(','));
+  download(`banking-codes-${today()}.csv`, '\ufeff' + rows.join('\r\n'), 'text/csv');
 }
 
 function sharedPathGet(path) { return path.split('.').reduce((o, k) => o?.[k], S.shared); }
@@ -1770,13 +1894,20 @@ function renderShared() {
   } else if (shTab === 'bank') {
     const ds = sh.departments;
     const q = norm(shBankQ).split(/\s+/).filter(Boolean);
-    const shows = (c) => !q.length || q.every((x) => (norm(c.name) + ' ' + norm(c.other) + ' ' + norm(c.code)).includes(x));
+    const shows = (c) => !q.length || q.every((x) => (norm(c.name) + ' ' + norm(c.other) + ' ' + norm(c.code) + ' ' + norm(c.type)).includes(x));
     h = `<p class="sh-intro">Choose the department on the email screen and its number goes into ${phCode('Department Number')} (and its name into ${phCode('Department')}). Then search its codes by name, e.g. <i>equ</i>, and the code fills in ${phCode('Banking Code')} (and its name ${phCode('Banking Code Name')}). <b>Other names</b> are extra words that find the code too, e.g. <i>gear, kit</i>.</p>
-      <div class="bank-tools"><input class="input" id="shBankQ" value="${esc(shBankQ)}" placeholder="Find a code in this list" autocomplete="off" spellcheck="false"></div>` +
+      <div class="bank-tools">
+        <input class="input" id="shBankQ" value="${esc(shBankQ)}" placeholder="Find a code in this list" autocomplete="off" spellcheck="false">
+        <button class="btn" type="button" data-bankupload>Upload spreadsheet</button>
+        <button class="link" type="button" data-bankdownload>Download as spreadsheet</button>
+        <input type="file" id="bankFile" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
+      </div>
+      <p class="sh-intro">A spreadsheet to upload has the columns <b>Department</b>, <b>Department Number</b>, <b>Code</b>, <b>Name</b>, <b>Type</b> and <b>Other names</b> (Excel .xlsx or .csv). Rows that are crossed out in Excel are left out. Uploading replaces the codes of each department in the file; other departments stay as they are. <i>Download as spreadsheet</i> gives you the current list in that layout.</p>` +
       ds.map((d, di) => {
         const rows = d.codes.map((c, ci) => shows(c) ? `<tr>
           <td class="w-name">${inp(`departments.${di}.codes.${ci}.name`, c.name, 'e.g. Equipment hire')}</td>
           <td class="w-code">${inp(`departments.${di}.codes.${ci}.code`, c.code, 'e.g. 4120')}</td>
+          <td class="w-type">${inp(`departments.${di}.codes.${ci}.type`, c.type, 'e.g. Expense')}</td>
           <td class="w-url">${inp(`departments.${di}.codes.${ci}.other`, c.other, 'other words to search by')}</td>
           <td class="c">${del(`departments.${di}.codes`, ci)}</td></tr>` : '').join('');
         const hidden = d.codes.filter((c) => !shows(c)).length;
@@ -1786,7 +1917,7 @@ function renderShared() {
             <label class="field w-num"><span class="lbl">Department number</span>${inp(`departments.${di}.number`, d.number, 'e.g. 200')}</label>
             ${ds.length > 1 ? `<button type="button" class="link danger" data-shdel="departments" data-i="${di}">Remove department</button>` : ''}
           </div>
-          ${table(['Code name', 'Code', 'Other names'], rows, q.length ? `No codes match “${esc(shBankQ.trim())}”.` : 'No codes yet.')}
+          ${table(['Code name', 'Code', 'Type', 'Other names'], rows, q.length ? `No codes match “${esc(shBankQ.trim())}”.` : 'No codes yet.')}
           ${hidden && q.length ? `<p class="none">${hidden} other code${hidden === 1 ? '' : 's'} hidden by the search.</p>` : ''}
           <div class="bank-add">
             <button class="btn" type="button" data-shaddcode="${di}">Add code</button>
@@ -1835,7 +1966,9 @@ function bindShared() {
     if (el.dataset.sh && el.tagName === 'INPUT') { setSharedPath(el.dataset.sh, el.value); saveShared(); }
   });
   dlg.addEventListener('change', (e) => {
-    const el = e.target; if (!el.dataset.sh) return;
+    const el = e.target;
+    if (el.id === 'bankFile') { const f = el.files[0]; el.value = ''; if (f) uploadBankFile(f); return; }
+    if (!el.dataset.sh) return;
     if (el.tagName === 'SELECT') { setSharedPath(el.dataset.sh, el.value); saveShared(); }
     if (el.tagName === 'SELECT' || (/\.name$/.test(el.dataset.sh) && !el.dataset.sh.startsWith('departments.'))) renderShared(); // refresh the [placeholder] shown next to it
   });
@@ -1853,12 +1986,14 @@ function bindShared() {
     const addc = e.target.closest('[data-shaddcode]');
     if (addc) {
       const di = +addc.dataset.shaddcode; const d = S.shared.departments[di];
-      d.codes.push({ id: uid('bc'), name: '', code: '', other: '' });
+      d.codes.push({ id: uid('bc'), name: '', code: '', type: '', other: '' });
       shBankQ = '';
       renderShared();
       $(`#shBody [data-sh="departments.${di}.codes.${d.codes.length - 1}.name"]`)?.focus();
       return;
     }
+    if (e.target.closest('[data-bankupload]')) { $('#bankFile').click(); return; }
+    if (e.target.closest('[data-bankdownload]')) { downloadBankCodes(); return; }
     const pa = e.target.closest('[data-bankpasteadd]');
     if (pa) {
       const di = +pa.dataset.bankpasteadd; const d = S.shared.departments[di];
