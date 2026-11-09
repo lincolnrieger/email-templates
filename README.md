@@ -81,6 +81,28 @@ code; a third column becomes other names), or type `Name, Code` one per line.
 A name that's already in the department gets its code updated rather than
 added twice. The box at the top finds a code in the list.
 
+### Uploading codes from a spreadsheet
+
+**Upload spreadsheet** (in the Banking codes tab) takes an Excel `.xlsx` or a
+`.csv` with these headings in the first row:
+
+| Department | Department Number | Code | Name | Type | Other names |
+| --- | --- | --- | --- | --- | --- |
+| Woodhouse | 190010 | 2638 | R & M - Grounds | Expense | Bunnings, Mitre 10 |
+
+- One row per code. *Type* (e.g. Expense or Income) and *Other names* are
+  optional; *Type* shows next to the code when searching.
+- Rows that are **crossed out** (strikethrough) in Excel are left out.
+- Before anything changes it tells you how many codes it found per department
+  and asks to confirm.
+- Each department in the file has its codes **replaced** by the file's list.
+  Departments are matched by number (or name); departments not in the file are
+  left alone. Blank departments are filled first, so the first upload doesn't
+  add extra ones.
+
+**Download as spreadsheet** saves the current codes in the same layout, so the
+easiest way to make changes in bulk is to download, edit in Excel and upload.
+
 ## Building variations
 
 A template can have one version per building instead of seven near-identical
