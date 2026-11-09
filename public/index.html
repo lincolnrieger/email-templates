@@ -135,6 +135,25 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .nav svg.i{width:16px;height:16px;color:var(--faint)}
 .side-foot{margin-top:auto;padding:16px 20px 0;display:grid;gap:4px;justify-items:start}
 
+.shell.ap-mode .listpane,.shell.ap-mode .detail{display:none !important}
+.ap{grid-column:2 / -1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+.ap[hidden]{display:none}
+.ap-head{padding:18px 24px 14px;display:grid;gap:12px;border-bottom:1px solid var(--line);background:var(--surface)}
+.ap-title{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ap-title h2{margin:0;font-size:18px}
+.ap-title span{font-size:12.5px;color:var(--muted)}
+.ap-title .link{margin-left:auto}
+.ap-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.ap-tools .input{max-width:380px;height:36px;flex:1;min-width:220px}
+.ap-body{overflow:auto;flex:1;padding:16px 24px 32px}
+table.ap-t{background:var(--surface);min-width:760px}
+.ap-t td{padding:7px 10px;vertical-align:middle}
+.ap-t thead th{position:sticky;top:-16px;z-index:1}
+.ap-t .mono{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.ap-t .ap-other{color:var(--muted);font-size:12.5px}
+.ap-t mark{background:#FFF0B3;color:inherit;border-radius:2px}
+.ap-code{border:1px solid var(--green-line);background:var(--green-tint);color:var(--green-dark);border-radius:var(--r-sm);font:600 12.5px/20px var(--mono);padding:0 7px;cursor:pointer}
+.ap-code:hover{background:var(--green-soft);border-color:var(--green)}
 .listpane{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--surface);min-width:0;min-height:0}
 .list-head{padding:14px 16px 12px;border-bottom:1px solid var(--line);display:grid;gap:10px;background:var(--surface)}
 .list-title{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -396,6 +415,7 @@ table.sh-t{min-width:900px}
   .m-cat{display:block}
   .list-tools{grid-template-columns:1fr 1fr}
   .list-tools .m-cat{grid-column:1 / -1}
+  .ap{grid-column:1 / -1}
   .brand{width:auto}
   .brand small{display:none}
 }
@@ -494,6 +514,24 @@ table.sh-t{min-width:900px}
   </section>
 
   <main class="detail" id="detail" aria-live="off"></main>
+
+  <section class="ap" id="apPane" aria-label="Accounts payable codes" hidden>
+    <div class="ap-head">
+      <select class="select m-cat" aria-label="Show"></select>
+      <div class="ap-title"><h2>Accounts payable</h2><span id="apCount"></span><button class="link" type="button" data-act="openbank">Edit in Codes &amp; links</button></div>
+      <div class="ap-tools">
+        <input class="input" id="apQ" type="search" placeholder="Search codes, e.g. equ, bunnings, 2638" autocomplete="off" spellcheck="false">
+        <div class="choices" id="apDepts"></div>
+      </div>
+      <p class="help" style="margin:0">Click a code to copy it.</p>
+    </div>
+    <div class="ap-body">
+      <table class="vt ap-t">
+        <thead><tr><th>Department</th><th>Dept number</th><th>Code</th><th>Name</th><th>Type</th><th>Other names</th></tr></thead>
+        <tbody id="apRows"></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 
 <!-- Manage categories -->

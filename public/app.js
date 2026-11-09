@@ -196,7 +196,7 @@ const S = {
   usage: { recent: [], counts: {}, last: {} },
   images: [],           // image library: {id, name, type, width, height, size}
   shared: null,         // Codes & links: gate codes, places, links, maps, other details
-  view: 'all',          // 'all' | 'fav' | 'recent' | 'cat:<id>' | 'cat:' (uncategorised)
+  view: 'all',          // 'all' | 'fav' | 'ap' (accounts payable codes) | 'cat:<id>' | 'cat:' (uncategorised)
   query: '',
   sort: 'best',
   building: '',
@@ -320,7 +320,6 @@ function visibleTemplates() {
   let list = [];
   for (const t of S.templates) {
     if (S.view === 'fav' && !t.favourite) continue;
-    if (S.view === 'recent' && !S.usage.recent.includes(t.id)) continue;
     if (S.view.startsWith('cat:')) {
       const cid = S.view.slice(4);
       if (cid ? t.categoryId !== cid : S.categories.some((c) => c.id === t.categoryId)) continue;
@@ -330,7 +329,7 @@ function visibleTemplates() {
     if (!m) continue;
     list.push({ t, score: m.score, variationId: m.variationId });
   }
-  const sort = S.sort === 'best' && !toks.length ? (S.view === 'recent' ? 'recent' : 'name') : S.sort;
+  const sort = S.sort === 'best' && !toks.length ? 'name' : S.sort;
   const name = (a, b) => a.t.name.localeCompare(b.t.name, 'en', { sensitivity: 'base' });
   const recentRank = (id) => { const i = S.usage.recent.indexOf(id); return i < 0 ? 1e9 : i; };
   const cmp = {
@@ -347,20 +346,19 @@ function visibleTemplates() {
 
 function viewTitle() {
   if (S.view === 'fav') return 'Favourites';
-  if (S.view === 'recent') return 'Recently used';
   if (S.view.startsWith('cat:')) return catName(S.view.slice(4));
   return 'All templates';
 }
 
 function renderSide() {
   const favN = S.templates.filter((t) => t.favourite).length;
-  const recN = S.usage.recent.filter((id) => byId(id)).length;
+  const codeN = departments().reduce((n, d) => n + d.codes.length, 0);
   const item = (view, label, n, icon) =>
     `<li><button type="button" data-view="${esc(view)}" aria-current="${S.view === view}">${icon || ''}<span class="nm">${esc(label)}</span><span class="n">${n}</span></button></li>`;
   $('#views').innerHTML =
     item('all', 'All templates', S.templates.length, ICON.all) +
     item('fav', 'Favourites', favN, ICON.star) +
-    item('recent', 'Recently used', recN, ICON.clock);
+    item('ap', 'Accounts payable', codeN, ICON.key);
   const counts = {};
   for (const t of S.templates) counts[t.categoryId] = (counts[t.categoryId] || 0) + 1;
   const known = new Set(S.categories.map((c) => c.id));
@@ -369,8 +367,9 @@ function renderSide() {
     (uncategorised ? item('cat:', 'Uncategorised', uncategorised) : '');
 
   // Small screens: the sidebar collapses into this dropdown.
-  const opts = [['all', 'All templates'], ['fav', 'Favourites'], ['recent', 'Recently used'], ...S.categories.map((c) => ['cat:' + c.id, c.name]), ...(uncategorised ? [['cat:', 'Uncategorised']] : [])];
-  $('#mCat').innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}"${S.view === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const opts = [['all', 'All templates'], ['fav', 'Favourites'], ['ap', 'Accounts payable'], ...S.categories.map((c) => ['cat:' + c.id, c.name]), ...(uncategorised ? [['cat:', 'Uncategorised']] : [])];
+  $$('.m-cat').forEach((sel) => { sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}"${S.view === v ? ' selected' : ''}>${esc(l)}</option>`).join(''); });
+  showView();
 
   // Building filter: every building used by any template.
   const bs = [...new Set(S.templates.flatMap((t) => t.variations.map((v) => v.building)).filter(Boolean))].sort();
@@ -405,6 +404,51 @@ function renderList() {
       ${t.description ? `<div class="r3">${highlight(t.description, toks)}</div>` : ''}
     </button></li>`;
   }).join('');
+}
+
+/* ===================================================== Accounts payable view */
+//
+// Every banking code in one table, to look up a code without opening a
+// template. View only; changes are made in Codes & links -> Banking codes.
+
+let apDept = ''; // '' = every department
+
+/** Show either the template list and detail, or the accounts payable page. */
+function showView() {
+  const ap = S.view === 'ap';
+  $('#shell').classList.toggle('ap-mode', ap);
+  $('#apPane').hidden = !ap;
+  if (ap) renderAp();
+}
+
+function renderAp() {
+  const ds = departments();
+  if (apDept && !deptById(apDept)) apDept = '';
+  $('#apDepts').innerHTML = [['', 'All'], ...ds.map((d, i) => [d.id, deptLabel(d, i) + (d.number.trim() ? ' ' + d.number.trim() : '')])]
+    .map(([id, l]) => `<button type="button" class="choice" data-apdept="${esc(id)}" aria-pressed="${id === apDept}">${esc(l)}</button>`).join('');
+  renderApTable();
+}
+
+function renderApTable() {
+  const ds = departments();
+  const q = $('#apQ').value;
+  const toks = queryTokens(q);
+  const dp = deptById(apDept);
+  const hits = bankSearch(q, dp);
+  // With nothing typed, list them in order: department, then code number.
+  const num = (c) => (/^\d+$/.test(c.code.trim()) ? +c.code.trim() : Infinity);
+  if (!q.trim()) hits.sort((a, b) => ds.indexOf(a.dept) - ds.indexOf(b.dept) || num(a.code) - num(b.code) || a.code.name.localeCompare(b.code.name));
+  const total = (dp ? [dp] : ds).reduce((n, d) => n + d.codes.length, 0);
+  $('#apCount').textContent = q.trim() ? `${hits.length} of ${total} codes` : `${total} codes`;
+  $('#apRows').innerHTML = hits.length
+    ? hits.map(({ dept, code }) => `<tr>
+        <td>${esc(deptLabel(dept, ds.indexOf(dept)))}</td>
+        <td class="mono">${esc(dept.number)}</td>
+        <td class="mono"><button type="button" class="ap-code" data-apcopy="${esc(code.code)}" title="Copy ${esc(code.code)}">${highlight(code.code, toks)}</button></td>
+        <td>${highlight(code.name, toks)}</td>
+        <td>${highlight(code.type, toks)}</td>
+        <td class="ap-other">${highlight(code.other, toks)}</td></tr>`).join('')
+    : `<tr><td colspan="6" class="none" style="padding:14px">${total ? `No code matches “${esc(q.trim())}”.` : 'No banking codes yet. Add or upload them under Codes &amp; links → Banking codes.'}</td></tr>`;
 }
 
 function renderAll() {
@@ -1418,6 +1462,7 @@ function bind() {
   q.addEventListener('input', () => {
     S.query = q.value;
     S.kbIndex = q.value ? 0 : -1;
+    if (S.view === 'ap' && q.value) { S.view = 'all'; renderSide(); }
     $('#qx').hidden = !q.value; $('#qk').hidden = !!q.value;
     if (q.value && S.sort !== 'best' && !bind.sortTouched) S.sort = 'best';
     renderList();
@@ -1455,11 +1500,22 @@ function bind() {
 
   $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; bind.sortTouched = true; renderList(); });
   $('#fBuilding').addEventListener('change', (e) => { S.building = e.target.value; renderList(); });
-  $('#mCat').addEventListener('change', (e) => { S.view = e.target.value; S.kbIndex = -1; renderSide(); renderList(); });
+  $$('.m-cat').forEach((sel) => sel.addEventListener('change', (e) => { S.view = e.target.value; S.kbIndex = -1; renderSide(); renderList(); }));
+
+  // Accounts payable page
+  $('#apQ').addEventListener('input', renderApTable);
+  $('#apQ').addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.stopPropagation(); e.target.value = ''; renderApTable(); } });
+  $('#apPane').addEventListener('click', async (e) => {
+    const d = e.target.closest('[data-apdept]');
+    if (d) { apDept = d.dataset.apdept; renderAp(); $('#apQ').focus(); return; }
+    if (e.target.closest('[data-act="openbank"]')) { openShared('bank'); return; }
+    const c = e.target.closest('[data-apcopy]');
+    if (c && c.dataset.apcopy && await copyText(c.dataset.apcopy)) toast(`Copied ${c.dataset.apcopy}`);
+  });
 
   $('.side').addEventListener('click', (e) => {
     const b = e.target.closest('[data-view]');
-    if (b) { S.view = b.dataset.view; S.kbIndex = -1; if (S.view === 'recent' && !S.query) S.sort = 'best'; renderSide(); renderList(); }
+    if (b) { S.view = b.dataset.view; S.kbIndex = -1; renderSide(); renderList(); if (S.view === 'ap') $('#apQ').focus(); }
   });
 
   $('#list').addEventListener('click', (e) => {
@@ -1834,6 +1890,7 @@ function saveShared() {
       $('#shSaved').textContent = 'All changes saved';
     } catch (e) { $('#shSaved').textContent = 'Not saved'; toast(e.message, 'err', 7000); }
     if (S.mode !== 'edit') renderDetail(); else renderChips();
+    renderSide();
   }, 450);
 }
 
